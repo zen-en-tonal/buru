@@ -9,27 +9,61 @@ use std::{
     path::PathBuf,
 };
 
-/// Main structure to manage file storage based on visual hash.
+/// Storage module to manage file storage based on pixel hashes.
+///
+/// Files are stored under a directory tree derived from the pixel hash.
+/// Duplicate visual content (regardless of file format) is detected and rejected.
 pub struct Storage {
     root_path: PathBuf,
 }
 
 impl Storage {
+    /// Creates a new `Storage` instance with the specified root path.
+    ///
+    /// # Arguments
+    ///
+    /// * `root` - Root directory path where all files will be stored.
     pub fn new(root: PathBuf) -> Storage {
         Storage { root_path: root }
     }
 
-    /// Creates a new file entry in the storage.
+    /// Creates and saves a new file into storage.
     ///
-    /// This method processes an input byte array as an image, computes a visual hash,
-    /// and stores the image in a structured directory hierarchy based on the hash.
-    /// If a file with the same visual hash already exists, an error is returned.
+    /// The file is decoded as an image, and a pixel-based hash is computed.
+    /// If another file with the same visual content already exists, an error is returned.
+    ///
+    /// # Arguments
+    ///
+    /// * `bytes` - The raw byte array of the image file.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Md5Hash)` - The computed pixel hash if the file was saved successfully.
+    /// * `Err(StorageError)` - If there was a collision or a saving error.
+    ///
+    /// # Errors
+    ///
+    /// - `StorageError::HashCollision` if a file with the same pixel hash already exists.
+    /// - `StorageError::UnsupportedFile` if the file type cannot be determined.
+    /// - `StorageError::Io` if directory creation or file writing fails.
+    /// - `StorageError::Image` if operate the image fails.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use buru::Storage;
+    /// # use std::path::PathBuf;
+    /// let storage = Storage::new(PathBuf::from("/tmp/storage"));
+    /// let bytes = include_bytes!("../testdata/sample.png");
+    /// let hash = storage.create_file(bytes).unwrap();
+    /// println!("File stored with pixel hash: {:?}", hash);
+    /// ```
     pub fn create_file(&self, bytes: &[u8]) -> Result<Md5Hash, StorageError> {
         // Since `DynamicImage` does not expose the format it was decoded from,
         // we independently guess the file format here based on the byte content.
         // If the format cannot be reliably guessed, the file is considered suspicious
         // and the process is aborted early.
-        let kind = infer::get(bytes).ok_or(StorageError::UnsupportedFile)?;
+        let kind = infer::get(bytes).ok_or(StorageError::UnsupportedFile { kind: None })?;
 
         // Decode the byte array into a DynamicImage for further pixel processing.
         let img = ImageReader::new(std::io::Cursor::new(bytes))
@@ -48,41 +82,44 @@ impl Storage {
 
         // If a file with the same pixel hash already exists in the storage,
         // return a collision error to prevent overwriting visually identical content.
-        if self.find_entry(&pixel_hash).is_some() {
-            return Err(StorageError::HashCollision);
+        if let Some(entry) = self.find_entry(&pixel_hash) {
+            return Err(StorageError::HashCollision {
+                existing_path: entry,
+            });
         }
 
         // Compose the filename as `{pixel_hash}.{extension}`,
         // and save the image using the guessed file format.
         let filename = self.derive_filename(&pixel_hash, kind.extension());
         let filepath = dir_path.join(filename);
-        let format =
-            ImageFormat::from_extension(kind.extension()).ok_or(StorageError::UnsupportedFile)?;
+        let format = ImageFormat::from_extension(kind.extension())
+            .ok_or(StorageError::UnsupportedFile { kind: Some(kind) })?;
         img.save_with_format(filepath, format)?;
 
         Ok(pixel_hash)
     }
 
-    /// Given a hash, returns the relative file path if it exists.
-    pub fn index_file(&self, hash: &Md5Hash) -> Option<String> {
+    /// Returns the relative path of a stored file based on its hash, if it exists.
+    ///
+    /// # Arguments
+    ///
+    /// * `hash` - The pixel hash to locate.
+    ///
+    /// # Returns
+    ///
+    /// * `Some(relative_path)` if the file exists.
+    /// * `None` if no matching file is found.
+    pub fn index_file(&self, hash: &Md5Hash) -> Option<PathBuf> {
         self.find_entry(hash).map(|p| {
-            format!(
-                "{}{}",
-                self.derive_dir(hash),
-                &p.file_name()
-                    .expect("Failed to get file name")
-                    .to_string_lossy()
-            )
+            self.derive_dir(hash)
+                .join(p.file_name().expect("Failed to get file name"))
         })
     }
 
     /// Derives a relative directory path from the hash (for indexing).
-    /// Example: `/01/23/`
-    fn derive_dir(&self, hash: &Md5Hash) -> String {
-        format!(
-            "/{:02x}{:02x}/{:02x}{:02x}/",
-            hash.0[0], hash.0[1], hash.0[2], hash.0[3]
-        )
+    /// Example: `01/23/`
+    fn derive_dir(&self, hash: &Md5Hash) -> PathBuf {
+        PathBuf::from(format!("{:02x}/{:02x}/", hash.0[0], hash.0[1]))
     }
 
     /// Derives the absolute directory path on the filesystem.
@@ -91,10 +128,10 @@ impl Storage {
     }
 
     /// Generates a filename based on the hash and extension.
-    fn derive_filename(&self, hash: &Md5Hash, ext: &str) -> String {
+    fn derive_filename(&self, hash: &Md5Hash, ext: &str) -> PathBuf {
         let hash_str: String = hash.clone().into();
 
-        format!("{}.{}", hash_str, ext.to_string())
+        PathBuf::from(format!("{}.{}", hash_str, ext.to_string()))
     }
 
     /// Searches for a file matching the hash (with any extension).
@@ -115,9 +152,9 @@ impl Storage {
 #[derive(Debug)]
 pub enum StorageError {
     /// Same pixel hash already exists.
-    HashCollision,
+    HashCollision { existing_path: PathBuf },
     /// File format could not be determined or is unsupported.
-    UnsupportedFile,
+    UnsupportedFile { kind: Option<infer::Type> },
     /// Filesystem IO error.
     Io(std::io::Error),
     /// Image decoding or saving error.
@@ -138,10 +175,31 @@ impl From<image::ImageError> for StorageError {
     }
 }
 
-/// Formats StorageError for display (to be implemented).
+/// Formats StorageError for display.
 impl Display for StorageError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        todo!()
+        match self {
+            StorageError::HashCollision { existing_path } => {
+                write!(
+                    f,
+                    "Hash collision detected. Existing file at: {}",
+                    existing_path.display()
+                )
+            }
+            StorageError::UnsupportedFile { kind } => {
+                if let Some(mime) = kind {
+                    write!(f, "Unsupported file format: {}", mime)
+                } else {
+                    write!(f, "Unsupported or unrecognized file format.")
+                }
+            }
+            StorageError::Io(inner) => {
+                write!(f, "Filesystem error: {}", inner)
+            }
+            StorageError::Image(inner) => {
+                write!(f, "Image error: {}", inner)
+            }
+        }
     }
 }
 
@@ -151,6 +209,52 @@ impl Error for StorageError {}
 /// Represents a 16-byte MD5 hash.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Md5Hash([u8; 16]);
+
+impl Md5Hash {
+    pub fn to_string(self) -> String {
+        self.into()
+    }
+}
+
+impl TryFrom<String> for Md5Hash {
+    type Error = Md5HashParseError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        if value.len() != 32 {
+            return Err(Md5HashParseError::InvalidLength);
+        }
+
+        let mut bytes = [0u8; 16];
+
+        for (i, byte) in bytes.iter_mut().enumerate() {
+            let chunk = &value[i * 2..i * 2 + 2];
+            *byte = u8::from_str_radix(chunk, 16).map_err(|_| Md5HashParseError::InvalidHex)?;
+        }
+
+        Ok(Md5Hash(bytes))
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Md5HashParseError {
+    InvalidLength,
+    InvalidHex,
+}
+
+impl Display for Md5HashParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Md5HashParseError::InvalidLength => {
+                write!(f, "MD5 hash must be exactly 32 hexadecimal characters.")
+            }
+            Md5HashParseError::InvalidHex => {
+                write!(f, "MD5 hash contains invalid hexadecimal characters.")
+            }
+        }
+    }
+}
+
+impl Error for Md5HashParseError {}
 
 /// Converts an Md5Hash into a hex string.
 impl From<Md5Hash> for String {
@@ -165,4 +269,104 @@ fn compute_pixel_hash(img: &DynamicImage) -> Md5Hash {
     let digest = md5::compute(&pixels);
 
     Md5Hash(digest.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{fs, path::PathBuf};
+
+    use crate::storage::{Md5Hash, Md5HashParseError, Storage, StorageError};
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_md5_parse() {
+        assert_eq!(
+            Ok(Md5Hash([
+                50, 148, 53, 229, 230, 107, 232, 9, 166, 86, 175, 16, 95, 66, 64, 30
+            ])),
+            Md5Hash::try_from("329435e5e66be809a656af105f42401e".to_string())
+        );
+        assert_eq!(
+            Err(Md5HashParseError::InvalidLength),
+            Md5Hash::try_from("329435e5e66b".to_string())
+        );
+        assert_eq!(
+            Err(Md5HashParseError::InvalidHex),
+            Md5Hash::try_from("Z29435e5e66be809a656af105f42401e".to_string())
+        );
+    }
+
+    #[test]
+    fn test_pathes() {
+        let storage = Storage::new("/root".into());
+
+        assert_eq!(
+            PathBuf::from("ab/cd/"),
+            storage.derive_dir(
+                &Md5Hash::try_from("abcd35e5e66be809a656af105f42401e".to_string()).unwrap()
+            )
+        );
+
+        assert_eq!(
+            PathBuf::from("/root/ab/cd/"),
+            storage.derive_abs_dir(
+                &Md5Hash::try_from("abcd35e5e66be809a656af105f42401e".to_string()).unwrap()
+            )
+        )
+    }
+
+    #[test]
+    fn test_create_file() {
+        let tmp_dir = TempDir::new().unwrap();
+        let storage = Storage::new(tmp_dir.path().to_path_buf());
+
+        let file_bytes = include_bytes!("../testdata/620a139c9d3e63188299d0150c198bd5.png");
+        let expect_path = tmp_dir
+            .path()
+            .join("62/0a/620a139c9d3e63188299d0150c198bd5.png");
+
+        storage.create_file(file_bytes).unwrap();
+
+        assert!(fs::exists(expect_path).unwrap())
+    }
+
+    #[test]
+    fn test_create_file_on_duplicated() {
+        let tmp_dir = TempDir::new().unwrap();
+        let storage = Storage::new(tmp_dir.path().to_path_buf());
+
+        let file_bytes = include_bytes!("../testdata/620a139c9d3e63188299d0150c198bd5.png");
+        let expect_path = tmp_dir
+            .path()
+            .join("62/0a/620a139c9d3e63188299d0150c198bd5.png");
+
+        storage.create_file(file_bytes).unwrap();
+
+        let result = storage.create_file(file_bytes);
+        let Err(StorageError::HashCollision { existing_path }) = result else {
+            panic!("Expected HashCollision error, but got {:?}", result);
+        };
+
+        assert_eq!(expect_path, existing_path)
+    }
+
+    #[test]
+    fn test_find_entry() {
+        let tmp_dir = TempDir::new().unwrap();
+        let storage = Storage::new(tmp_dir.path().to_path_buf());
+
+        let file_bytes = include_bytes!("../testdata/620a139c9d3e63188299d0150c198bd5.png");
+        let expect_path = tmp_dir
+            .path()
+            .join("62/0a/620a139c9d3e63188299d0150c198bd5.png");
+
+        storage.create_file(file_bytes).unwrap();
+
+        assert_eq!(
+            Some(expect_path),
+            storage.find_entry(
+                &Md5Hash::try_from("620a139c9d3e63188299d0150c198bd5".to_string()).unwrap()
+            )
+        )
+    }
 }
