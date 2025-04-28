@@ -1,0 +1,10 @@
+[package]
+name = "buru"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+glob = "0.3.2"
+image = "0.25.6"
+infer = "0.19.0"
+md5 = "0.7.0"
