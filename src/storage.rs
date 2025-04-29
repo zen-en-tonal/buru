@@ -21,7 +21,6 @@ impl Storage {
     /// Creates a new `Storage` instance with the specified root path.
     ///
     /// # Arguments
-    ///
     /// * `root` - Root directory path where all files will be stored.
     pub fn new(root: PathBuf) -> Storage {
         Storage { root_path: root }
@@ -37,12 +36,10 @@ impl Storage {
     /// * `bytes` - The raw byte array of the image file.
     ///
     /// # Returns
-    ///
     /// * `Ok(Md5Hash)` - The computed pixel hash if the file was saved successfully.
     /// * `Err(StorageError)` - If there was a collision or a saving error.
     ///
     /// # Errors
-    ///
     /// - `StorageError::HashCollision` if a file with the same pixel hash already exists.
     /// - `StorageError::UnsupportedFile` if the file type cannot be determined.
     /// - `StorageError::Io` if directory creation or file writing fails.
@@ -102,11 +99,9 @@ impl Storage {
     /// Returns the relative path of a stored file based on its hash, if it exists.
     ///
     /// # Arguments
-    ///
     /// * `hash` - The pixel hash to locate.
     ///
     /// # Returns
-    ///
     /// * `Some(relative_path)` if the file exists.
     /// * `None` if no matching file is found.
     pub fn index_file(&self, hash: &Md5Hash) -> Option<PathBuf> {
@@ -114,6 +109,24 @@ impl Storage {
             self.derive_dir(hash)
                 .join(p.file_name().expect("Failed to get file name"))
         })
+    }
+
+    /// Ensures that the file associated with the given pixel hash does not exist.
+    ///
+    /// If the file exists, it is deleted.
+    /// If the file does not exist, this function still succeeds.
+    ///
+    /// # Arguments
+    /// * `hash` - The pixel hash of the file to delete.
+    ///
+    /// # Returns
+    /// * `Ok(())` if the file does not exist after the call.
+    /// * `Err(StorageError::FilesystemError)` if an unexpected I/O error occurs.
+    pub fn ensure_deleted(&self, hash: &Md5Hash) -> Result<(), StorageError> {
+        if let Some(path) = self.find_entry(hash) {
+            fs::remove_file(path)?;
+        }
+        Ok(())
     }
 
     /// Derives a relative directory path from the hash (for indexing).
@@ -301,14 +314,14 @@ mod tests {
         let storage = Storage::new("/root".into());
 
         assert_eq!(
-            PathBuf::from("ab/cd/"),
+            PathBuf::from("ab/cd"),
             storage.derive_dir(
                 &Md5Hash::try_from("abcd35e5e66be809a656af105f42401e".to_string()).unwrap()
             )
         );
 
         assert_eq!(
-            PathBuf::from("/root/ab/cd/"),
+            PathBuf::from("/root/ab/cd"),
             storage.derive_abs_dir(
                 &Md5Hash::try_from("abcd35e5e66be809a656af105f42401e".to_string()).unwrap()
             )
@@ -351,22 +364,60 @@ mod tests {
     }
 
     #[test]
-    fn test_find_entry() {
+    fn test_index_file() {
         let tmp_dir = TempDir::new().unwrap();
         let storage = Storage::new(tmp_dir.path().to_path_buf());
 
         let file_bytes = include_bytes!("../testdata/620a139c9d3e63188299d0150c198bd5.png");
-        let expect_path = tmp_dir
-            .path()
-            .join("62/0a/620a139c9d3e63188299d0150c198bd5.png");
+        let expect_path = PathBuf::from("62/0a/620a139c9d3e63188299d0150c198bd5.png");
 
         storage.create_file(file_bytes).unwrap();
 
         assert_eq!(
             Some(expect_path),
-            storage.find_entry(
+            storage.index_file(
                 &Md5Hash::try_from("620a139c9d3e63188299d0150c198bd5".to_string()).unwrap()
             )
-        )
+        );
+
+        assert_eq!(
+            None,
+            storage.index_file(
+                &Md5Hash::try_from("020a139c9d3e63188299d0150c198bd5".to_string()).unwrap()
+            )
+        );
+    }
+
+    #[test]
+    fn test_ensure_deleted() {
+        let tmp_dir = TempDir::new().unwrap();
+        let storage = Storage::new(tmp_dir.path().to_path_buf());
+
+        let file_bytes = include_bytes!("../testdata/620a139c9d3e63188299d0150c198bd5.png");
+        storage.create_file(file_bytes).unwrap();
+
+        assert!(
+            storage
+                .ensure_deleted(
+                    &Md5Hash::try_from("620a139c9d3e63188299d0150c198bd5".to_string()).unwrap()
+                )
+                .is_ok()
+        );
+
+        assert!(
+            storage
+                .ensure_deleted(
+                    &Md5Hash::try_from("620a139c9d3e63188299d0150c198bd5".to_string()).unwrap()
+                )
+                .is_ok()
+        );
+
+        assert!(
+            storage
+                .ensure_deleted(
+                    &Md5Hash::try_from("020a139c9d3e63188299d0150c198bd5".to_string()).unwrap()
+                )
+                .is_ok()
+        );
     }
 }
