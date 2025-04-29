@@ -1,3 +1,8 @@
+//! Storage module to manage file storage based on pixel hashes.
+//!
+//! Files are stored under a directory tree derived from the pixel hash.
+//! Duplicate visual content (regardless of file format) is detected and rejected.
+
 use glob::glob;
 use image::{DynamicImage, ImageFormat, ImageReader};
 use infer;
@@ -9,10 +14,6 @@ use std::{
     path::PathBuf,
 };
 
-/// Storage module to manage file storage based on pixel hashes.
-///
-/// Files are stored under a directory tree derived from the pixel hash.
-/// Duplicate visual content (regardless of file format) is detected and rejected.
 pub struct Storage {
     root_path: PathBuf,
 }
