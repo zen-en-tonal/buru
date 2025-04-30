@@ -69,4 +69,6 @@ pub trait Dialect {
     ///
     /// This removes all rows from `image_tags` where `image_hash` matches.
     fn delete_tags_by_image_statement() -> &'static str;
+
+    fn migration() -> Vec<&'static str>;
 }

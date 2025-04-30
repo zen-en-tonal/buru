@@ -236,6 +236,14 @@ impl Display for Md5Hash {
     }
 }
 
+impl TryFrom<&str> for Md5Hash {
+    type Error = Md5HashParseError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        Self::try_from(value.to_string())
+    }
+}
+
 impl TryFrom<String> for Md5Hash {
     type Error = Md5HashParseError;
 

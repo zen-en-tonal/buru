@@ -3,11 +3,19 @@ use crate::{
     query::Query,
     storage::Md5Hash,
 };
-use sqlx::Pool;
+pub use sqlx::Pool;
 use thiserror::Error;
 
 #[cfg(feature = "sqlite")]
 pub type Db = sqlx::Sqlite;
+
+pub async fn run_migration(pool: &sqlx::Pool<Db>) -> Result<(), sqlx::Error> {
+    for stmt in CurrentDialect::migration() {
+        sqlx::query(stmt).execute(pool).await?;
+    }
+
+    Ok(())
+}
 
 /// A database abstraction for storing and querying image-tag relationships.
 ///
@@ -20,6 +28,12 @@ pub struct Database {
 }
 
 impl Database {
+    pub async fn with_migration(pool: sqlx::Pool<Db>) -> Result<Self, sqlx::Error> {
+        run_migration(&pool).await?;
+
+        Ok(Self { pool })
+    }
+
     async fn retry<F, Fut, T>(&self, mut op: F) -> Result<T, DatabaseError>
     where
         F: FnMut() -> Fut,
@@ -325,5 +339,120 @@ impl DatabaseError {
             } => is_retryable_kind(source),
             DatabaseError::TransactionFailed { source } => is_retryable_kind(source),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        database::{Database, Db, Pool},
+        query::{Query, QueryExpr},
+        storage::Md5Hash,
+    };
+
+    /// Returns an in-memory SQLite connection pool for testing.
+    async fn get_pool() -> Pool<Db> {
+        Pool::connect(":memory:").await.unwrap()
+    }
+
+    /// Verifies that `Database::with_migration` can be called multiple times
+    /// on the same pool without error.
+    ///
+    /// This confirms that migrations are idempotent — i.e., calling them again
+    /// does not fail or break schema assumptions.
+    #[tokio::test]
+    async fn test_migration_idempotency() {
+        let pool = get_pool().await;
+
+        Database::with_migration(pool.clone()).await.unwrap();
+        Database::with_migration(pool.clone()).await.unwrap();
+    }
+
+    /// Ensures that inserting the same image multiple times does not result in error.
+    ///
+    /// This tests both insertion success and idempotency:
+    /// `ensure_image` should silently succeed even if the image already exists.
+    #[tokio::test]
+    async fn test_ensure_image() {
+        let pool = get_pool().await;
+        let db = Database::with_migration(pool.clone()).await.unwrap();
+
+        let image = Md5Hash::try_from("620a139c9d3e63188299d0150c198bd5").unwrap();
+
+        assert!(db.ensure_image(&image).await.is_ok());
+        assert!(db.ensure_image(&image).await.is_ok());
+    }
+
+    /// Full test of tag operations:
+    /// - Add tags to an image
+    /// - Add duplicate tags safely
+    /// - Remove tags idempotently
+    /// - Verify final tag list is correct
+    #[tokio::test]
+    async fn test_operate_image_tag() {
+        let pool = get_pool().await;
+        let db = Database::with_migration(pool.clone()).await.unwrap();
+
+        let image = Md5Hash::try_from("620a139c9d3e63188299d0150c198bd5").unwrap();
+
+        // Add tags "cat" and "dog" (including duplicate insertions)
+        assert!(db.ensure_image_has_tag(&image, "cat").await.is_ok());
+        assert!(db.ensure_image_has_tag(&image, "cat").await.is_ok());
+        assert!(db.ensure_image_has_tag(&image, "dog").await.is_ok());
+
+        // Confirm both tags are present
+        assert_eq!(
+            vec!["cat".to_string(), "dog".to_string()],
+            db.get_tags(&image).await.unwrap()
+        );
+
+        // Remove "dog" tag twice (should be safe and idempotent)
+        assert!(db.ensure_tag_removed(&image, "dog").await.is_ok());
+        assert!(db.ensure_tag_removed(&image, "dog").await.is_ok());
+
+        // Confirm only "cat" remains
+        assert_eq!(vec!["cat".to_string()], db.get_tags(&image).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_query_image() {
+        let pool = get_pool().await;
+        let db = Database::with_migration(pool.clone()).await.unwrap();
+
+        let image_cat = Md5Hash::try_from("620a139c9d3e63188299d0150c198bd5").unwrap();
+        let image_dog = Md5Hash::try_from("020a139c9d3e63188299d0150c198bd5").unwrap();
+        let image_cat_and_dog = Md5Hash::try_from("120a139c9d3e63188299d0150c198bd5").unwrap();
+
+        assert!(db.ensure_image_has_tag(&image_cat, "cat").await.is_ok());
+        assert!(db.ensure_image_has_tag(&image_dog, "dog").await.is_ok());
+        assert!(
+            db.ensure_image_has_tag(&image_cat_and_dog, "cat")
+                .await
+                .is_ok()
+        );
+        assert!(
+            db.ensure_image_has_tag(&image_cat_and_dog, "dog")
+                .await
+                .is_ok()
+        );
+
+        let query_cat = Query::new(QueryExpr::tag("cat"));
+        let query_dog = Query::new(QueryExpr::tag("dog"));
+        let query_cat_and_dog = Query::new(QueryExpr::tag("cat").and(QueryExpr::tag("dog")));
+
+        assert_eq!(
+            vec![image_cat, image_cat_and_dog.clone()],
+            db.find_by_query(query_cat).await.unwrap()
+        );
+
+        assert_eq!(
+            vec![image_dog, image_cat_and_dog.clone()],
+            db.find_by_query(query_dog).await.unwrap()
+        );
+
+        assert_eq!(
+            vec![image_cat_and_dog],
+            db.find_by_query(query_cat_and_dog).await.unwrap()
+        );
     }
 }

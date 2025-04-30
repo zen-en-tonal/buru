@@ -27,7 +27,7 @@ impl Dialect for SqliteDialect {
     }
 
     fn query_image_statement(condition: String) -> String {
-        format!("SELECT hash WHERE {}", condition)
+        format!("SELECT hash FROM images WHERE {}", condition)
     }
 
     fn query_tags_by_image_statement() -> &'static str {
@@ -44,5 +44,23 @@ impl Dialect for SqliteDialect {
 
     fn delete_tags_by_image_statement() -> &'static str {
         "DELETE FROM image_tags WHERE image_hash = ?"
+    }
+
+    fn migration() -> Vec<&'static str> {
+        vec![
+            r#"CREATE TABLE IF NOT EXISTS images (
+                hash TEXT PRIMARY KEY
+            );"#,
+            r#"CREATE TABLE IF NOT EXISTS tags (
+                name TEXT PRIMARY KEY
+            );"#,
+            r#"CREATE TABLE IF NOT EXISTS image_tags (
+                image_hash TEXT,
+                tag_name TEXT,
+                PRIMARY KEY (image_hash, tag_name),
+                FOREIGN KEY (image_hash) REFERENCES images(hash) ON DELETE CASCADE,
+                FOREIGN KEY (tag_name) REFERENCES tags(name) ON DELETE CASCADE
+            );"#,
+        ]
     }
 }
