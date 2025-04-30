@@ -1,10 +1,23 @@
 //! Query module for building flexible tag-based search queries.
+//!
+//! This module allows you to construct logical tag expressions (`AND`, `OR`, `NOT`)
+//! and convert them into database-agnostic SQL queries. The SQL dialect can be swapped
+//! at compile time using Cargo feature flags (e.g., `sqlite`, `postgres`).
 
+/// A trait for SQL dialects to support database-specific query generation.
 pub trait Dialect {
+    /// Returns the SQL placeholder syntax for the given parameter index.
+    ///
+    /// For example, `?` in SQLite or `$1` in PostgreSQL.
     fn placeholder(idx: usize) -> String;
+
+    /// Returns the SQL fragment for checking the existence of a tag for an image.
+    ///
+    /// This is used to generate EXISTS subqueries in WHERE conditions.
     fn exists_tag_query(idx: usize) -> String;
 }
 
+/// SQLite dialect implementation of the `Dialect` trait.
 #[cfg(feature = "sqlite")]
 pub struct SqliteDialect;
 
@@ -19,45 +32,51 @@ impl Dialect for SqliteDialect {
     }
 }
 
+/// The current SQL dialect used at compile time, determined by feature flags.
 #[cfg(feature = "sqlite")]
 pub type CurrentDialect = SqliteDialect;
 
+/// Represents a logical tag-based query expression.
 #[derive(Debug, Clone)]
 pub enum QueryExpr {
-    /// Represents a single tag condition.
+    /// A single tag condition.
     Tag(String),
 
-    /// Logical AND of two expressions.
+    /// Logical AND of two subexpressions.
     And(Box<QueryExpr>, Box<QueryExpr>),
 
-    /// Logical OR of two expressions.
+    /// Logical OR of two subexpressions.
     Or(Box<QueryExpr>, Box<QueryExpr>),
 
-    // Logical NOT of expressions.
+    /// Logical NOT of a subexpression.
     Not(Box<QueryExpr>),
 }
 
 impl QueryExpr {
-    /// Creates a single tag query.
+    /// Creates a query expression from a single tag.
     pub fn tag<T: Into<String>>(tag: T) -> Self {
         QueryExpr::Tag(tag.into())
     }
 
-    /// Combines two queries with AND.
+    /// Combines two expressions with a logical AND.
     pub fn and(self, other: QueryExpr) -> Self {
         QueryExpr::And(Box::new(self), Box::new(other))
     }
 
-    /// Combines two queries with OR.
+    /// Combines two expressions with a logical OR.
     pub fn or(self, other: QueryExpr) -> Self {
         QueryExpr::Or(Box::new(self), Box::new(other))
     }
 
+    /// Negates a query expression.
     pub fn not(expr: QueryExpr) -> Self {
         QueryExpr::Not(Box::new(expr))
     }
 
-    /// Converts the QueryExpr into an SQL WHERE clause and parameters.
+    /// Converts the query expression into an SQL WHERE clause and its bound parameters.
+    ///
+    /// # Returns
+    /// - `(String, Vec<String>)`: A tuple containing the SQL fragment and the corresponding parameter values.
     pub fn to_sql(&self) -> (String, Vec<String>) {
         let mut params = Vec::new();
         let sql = self.build_sql(&mut params);
@@ -76,21 +95,28 @@ impl QueryExpr {
             QueryExpr::Or(lhs, rhs) => {
                 format!("({} OR {})", lhs.build_sql(params), rhs.build_sql(params))
             }
-            QueryExpr::Not(query_expr) => {
-                format!("NOT {}", query_expr.build_sql(params))
+            QueryExpr::Not(expr) => {
+                format!("NOT {}", expr.build_sql(params))
             }
         }
     }
 }
 
+/// Represents a full query including logical expression and pagination.
 #[derive(Debug, Clone)]
 pub struct Query {
+    /// The logical expression used for filtering.
     pub expr: QueryExpr,
+
+    /// The maximum number of results to return.
     pub limit: Option<u32>,
+
+    /// The offset into the result set.
     pub offset: Option<u32>,
 }
 
 impl Query {
+    /// Creates a new query from a query expression.
     pub fn new(expr: QueryExpr) -> Self {
         Self {
             expr,
@@ -99,17 +125,24 @@ impl Query {
         }
     }
 
+    /// Sets the `LIMIT` for this query.
     pub fn with_limit(mut self, limit: u32) -> Self {
         self.limit = Some(limit);
         self
     }
 
+    /// Sets the `OFFSET` for this query.
     pub fn with_offset(mut self, offset: u32) -> Self {
         self.offset = Some(offset);
         self
     }
 
-    /// Builds SQL WHERE clause + LIMIT/OFFSET
+    /// Converts the full query into an SQL string and bound parameters.
+    ///
+    /// # Returns
+    /// - `(String, Vec<String>)`: SQL clause and ordered parameters
+    ///
+    /// The generated SQL includes any specified LIMIT or OFFSET.
     pub fn to_sql(&self) -> (String, Vec<String>) {
         let (mut where_sql, mut params) = self.expr.to_sql();
 
