@@ -1,3 +1,4 @@
+mod app;
 mod database;
 mod dialect;
 mod query;

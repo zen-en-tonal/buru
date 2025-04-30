@@ -14,6 +14,7 @@ use std::{
     path::PathBuf,
 };
 
+#[derive(Debug, Clone)]
 pub struct Storage {
     root_path: PathBuf,
 }
