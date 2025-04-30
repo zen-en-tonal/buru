@@ -1,3 +1,5 @@
+mod database;
+mod dialect;
 mod query;
 mod storage;
 

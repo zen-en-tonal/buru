@@ -230,6 +230,12 @@ impl Md5Hash {
     }
 }
 
+impl Display for Md5Hash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.clone().to_string())
+    }
+}
+
 impl TryFrom<String> for Md5Hash {
     type Error = Md5HashParseError;
 

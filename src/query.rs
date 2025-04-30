@@ -4,37 +4,7 @@
 //! and convert them into database-agnostic SQL queries. The SQL dialect can be swapped
 //! at compile time using Cargo feature flags (e.g., `sqlite`, `postgres`).
 
-/// A trait for SQL dialects to support database-specific query generation.
-pub trait Dialect {
-    /// Returns the SQL placeholder syntax for the given parameter index.
-    ///
-    /// For example, `?` in SQLite or `$1` in PostgreSQL.
-    fn placeholder(idx: usize) -> String;
-
-    /// Returns the SQL fragment for checking the existence of a tag for an image.
-    ///
-    /// This is used to generate EXISTS subqueries in WHERE conditions.
-    fn exists_tag_query(idx: usize) -> String;
-}
-
-/// SQLite dialect implementation of the `Dialect` trait.
-#[cfg(feature = "sqlite")]
-pub struct SqliteDialect;
-
-#[cfg(feature = "sqlite")]
-impl Dialect for SqliteDialect {
-    fn placeholder(_idx: usize) -> String {
-        "?".to_string()
-    }
-
-    fn exists_tag_query(_idx: usize) -> String {
-        "EXISTS (SELECT 1 FROM image_tags WHERE image_tags.image_hash = images.hash AND image_tags.tag_name = ?)".to_string()
-    }
-}
-
-/// The current SQL dialect used at compile time, determined by feature flags.
-#[cfg(feature = "sqlite")]
-pub type CurrentDialect = SqliteDialect;
+use crate::dialect::{CurrentDialect, Dialect};
 
 /// Represents a logical tag-based query expression.
 #[derive(Debug, Clone)]
