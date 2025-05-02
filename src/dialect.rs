@@ -26,6 +26,10 @@ pub trait Dialect {
     /// for the tag name.
     fn exists_tag_query(idx: usize) -> String;
 
+    fn exists_date_until_query(idx: usize) -> String;
+
+    fn exists_date_since_query(idx: usize) -> String;
+
     /// Returns the SQL statement to ensure an image exists in the `images` table.
     ///
     /// Usually implemented as an insert that ignores duplicates (e.g., `INSERT OR IGNORE`).

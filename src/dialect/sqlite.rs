@@ -56,6 +56,20 @@ impl Dialect for SqliteDialect {
         "DELETE FROM image_tags WHERE image_hash = ?"
     }
 
+    fn exists_date_until_query(idx: usize) -> String {
+        format!(
+            "EXISTS (SELECT 1 FROM image_metadatas WHERE image_metadatas.image_hash = images.hash AND created_at <= {})",
+            Self::placeholder(idx)
+        )
+    }
+
+    fn exists_date_since_query(idx: usize) -> String {
+        format!(
+            "EXISTS (SELECT 1 FROM image_metadatas WHERE image_metadatas.image_hash = images.hash AND created_at >= {})",
+            Self::placeholder(idx)
+        )
+    }
+
     fn migration() -> Vec<&'static str> {
         vec![
             r#"CREATE TABLE IF NOT EXISTS images (

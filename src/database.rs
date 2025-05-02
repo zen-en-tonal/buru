@@ -438,15 +438,13 @@ impl DatabaseError {
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
-
-    use chrono::DateTime;
-
     use crate::{
         database::{Database, Db, Pool},
         query::{Query, QueryExpr},
         storage::{ImageMetadata, Md5Hash},
     };
+    use chrono::DateTime;
+    use std::str::FromStr;
 
     /// Returns an in-memory SQLite connection pool for testing.
     async fn get_pool() -> Pool<Db> {
