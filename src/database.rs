@@ -242,7 +242,7 @@ impl Database {
 
         let rows = self
             .retry(|| async {
-                sqlx::query_scalar(&stmt)
+                sqlx::query_scalar(stmt)
                     .bind(hash.clone().to_string())
                     .fetch_all(&self.pool)
                     .await
@@ -265,7 +265,7 @@ impl Database {
 
         let metadata: Option<ImageMetadata> = self
             .retry(|| async {
-                sqlx::query_as(&stmt)
+                sqlx::query_as(stmt)
                     .bind(hash.clone().to_string())
                     .fetch_optional(&self.pool)
                     .await

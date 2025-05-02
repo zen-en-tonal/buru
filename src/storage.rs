@@ -6,8 +6,6 @@
 pub use chrono::{DateTime, Utc};
 use glob::glob;
 use image::{DynamicImage, GenericImageView, ImageFormat, ImageReader};
-use infer;
-use md5;
 use std::{
     error::Error,
     fmt::Display,
@@ -134,7 +132,7 @@ impl Storage {
 
     pub fn get_metadata(&self, hash: &Md5Hash) -> Result<ImageMetadata, StorageError> {
         let file_path = self
-            .find_entry(&hash)
+            .find_entry(hash)
             .ok_or(StorageError::FileNotFound { hash: hash.clone() })?;
 
         let bytes = std::fs::read(&file_path)?;
@@ -176,7 +174,7 @@ impl Storage {
     fn derive_filename(&self, hash: &Md5Hash, ext: &str) -> PathBuf {
         let hash_str: String = hash.clone().into();
 
-        PathBuf::from(format!("{}.{}", hash_str, ext.to_string()))
+        PathBuf::from(format!("{}.{}", hash_str, ext))
     }
 
     /// Searches for a file matching the hash (with any extension).
@@ -189,7 +187,7 @@ impl Storage {
         for entry in glob(&glob_pattern).expect("Failed to read glob pattern") {
             return Some(entry.expect("Failed to read entry"));
         }
-        return None;
+        None
     }
 }
 
