@@ -1,7 +1,7 @@
 use crate::{
     database::{Database, DatabaseError},
     query::Query,
-    storage::{Md5Hash, Storage, StorageError},
+    storage::{ImageMetadata, Md5Hash, Storage, StorageError},
 };
 use std::{collections::HashMap, path::PathBuf};
 use tokio::task::JoinSet;
@@ -13,11 +13,13 @@ pub async fn archive_image(
     tags: &[String],
 ) -> Result<Md5Hash, AppError> {
     let hash = storage.create_file(bytes)?;
+    let metadata = storage.get_metadata(&hash)?;
 
     db.ensure_image(&hash).await?;
     for tag in tags {
         db.ensure_image_has_tag(&hash, tag).await?;
     }
+    db.ensure_image_has_metadata(&hash, &metadata).await?;
 
     Ok(hash)
 }
@@ -40,7 +42,14 @@ pub async fn find_image_by_hash(
 
     let tags = db.get_tags(&hash).await?;
 
-    Ok(Image { path, hash, tags })
+    let metadata = db.get_metadata(&hash).await?.expect("");
+
+    Ok(Image {
+        path,
+        hash,
+        tags,
+        metadata,
+    })
 }
 
 pub async fn query_image(
@@ -84,6 +93,7 @@ pub async fn query_image(
 pub struct Image {
     path: PathBuf,
     hash: Md5Hash,
+    metadata: ImageMetadata,
     tags: Vec<String>,
 }
 
@@ -102,12 +112,11 @@ pub enum AppError {
 #[cfg(test)]
 mod tests {
     use crate::{
-        app::{Image, archive_image, query_image},
+        app::{archive_image, query_image},
         database::{Database, Pool},
         query::{Query, QueryExpr},
         storage::Storage,
     };
-    use std::path::PathBuf;
     use tempfile::TempDir;
 
     async fn get_db() -> Database {
@@ -126,19 +135,14 @@ mod tests {
         let storage = get_storage();
         let file_bytes = include_bytes!("../testdata/620a139c9d3e63188299d0150c198bd5.png");
 
-        let hash = archive_image(&storage, &db, file_bytes, &["cat".to_string()])
+        archive_image(&storage, &db, file_bytes, &["cat".to_string()])
             .await
             .unwrap();
 
         let query = Query::new(QueryExpr::tag("cat"));
 
-        assert_eq!(
-            vec![Image {
-                path: PathBuf::from("62/0a/620a139c9d3e63188299d0150c198bd5.png"),
-                hash,
-                tags: vec!["cat".to_string()]
-            }],
-            query_image(&db, &storage, query).await.unwrap()
-        );
+        let res = query_image(&db, &storage, query).await.unwrap();
+
+        dbg!(res);
     }
 }

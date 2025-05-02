@@ -11,7 +11,7 @@ impl Dialect for SqliteDialect {
     }
 
     fn exists_tag_query(_idx: usize) -> String {
-        "EXISTS (SELECT 1 FROM image_tags WHERE image_tags.image_hash = images.hash AND image_tags.tag_name = ?)".to_string()
+        "EXISTS (SELECT 1 FROM image_tags WHERE image_tags.image_hash = image_with_metadata.hash AND image_tags.tag_name = ?)".to_string()
     }
 
     fn ensure_image_statement() -> &'static str {
@@ -22,16 +22,26 @@ impl Dialect for SqliteDialect {
         "INSERT OR IGNORE INTO tags (name) VALUES (?)"
     }
 
+    fn ensure_metadata_statement() -> &'static str {
+        r#"INSERT OR IGNORE INTO image_metadatas
+        (image_hash, width, height, format, color_type, file_size, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)"#
+    }
+
     fn ensure_image_tag_statement() -> &'static str {
         "INSERT OR IGNORE INTO image_tags (image_hash, tag_name) VALUES (?, ?)"
     }
 
     fn query_image_statement(condition: String) -> String {
-        format!("SELECT hash FROM images WHERE {}", condition)
+        format!("SELECT hash FROM image_with_metadata WHERE {}", condition)
     }
 
     fn query_tags_by_image_statement() -> &'static str {
         "SELECT tag_name FROM image_tags WHERE image_hash = ?"
+    }
+
+    fn query_metadata_statement() -> &'static str {
+        "SELECT * FROM image_metadatas WHERE image_hash = ?"
     }
 
     fn delete_image_tag_statement() -> &'static str {
@@ -51,6 +61,17 @@ impl Dialect for SqliteDialect {
             r#"CREATE TABLE IF NOT EXISTS images (
                 hash TEXT PRIMARY KEY
             );"#,
+            r#"CREATE TABLE IF NOT EXISTS image_metadatas (
+                image_hash TEXT,
+                width INTEGER NOT NULL,
+                height INTEGER NOT NULL,
+                format TEXT NOT NULL,
+                color_type TEXT NOT NULL,
+                file_size INTEGER NOT NULL,
+                created_at TEXT,
+                PRIMARY KEY (image_hash),
+                FOREIGN KEY (image_hash) REFERENCES images(hash) ON DELETE CASCADE
+            );"#,
             r#"CREATE TABLE IF NOT EXISTS tags (
                 name TEXT PRIMARY KEY
             );"#,
@@ -61,6 +82,9 @@ impl Dialect for SqliteDialect {
                 FOREIGN KEY (image_hash) REFERENCES images(hash) ON DELETE CASCADE,
                 FOREIGN KEY (tag_name) REFERENCES tags(name) ON DELETE CASCADE
             );"#,
+            r#"CREATE VIEW IF NOT EXISTS image_with_metadata
+                AS SELECT * FROM images
+                LEFT JOIN image_metadatas ON images.hash = image_metadatas.image_hash;"#,
         ]
     }
 }

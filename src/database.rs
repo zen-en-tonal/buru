@@ -1,13 +1,19 @@
+use std::str::FromStr;
+
 use crate::{
     dialect::{CurrentDialect, Dialect},
     query::Query,
-    storage::Md5Hash,
+    storage::{ImageMetadata, Md5Hash},
 };
+use chrono::DateTime;
 pub use sqlx::Pool;
+use sqlx::{Execute, FromRow, Row};
 use thiserror::Error;
 
 #[cfg(feature = "sqlite")]
 pub type Db = sqlx::Sqlite;
+
+type CurrentRow = sqlx::sqlite::SqliteRow;
 
 pub async fn run_migration(pool: &sqlx::Pool<Db>) -> Result<(), sqlx::Error> {
     for stmt in CurrentDialect::migration() {
@@ -15,6 +21,27 @@ pub async fn run_migration(pool: &sqlx::Pool<Db>) -> Result<(), sqlx::Error> {
     }
 
     Ok(())
+}
+
+impl FromRow<'_, CurrentRow> for ImageMetadata {
+    fn from_row(row: &CurrentRow) -> Result<Self, sqlx::Error> {
+        let width: i32 = row.try_get("width")?;
+        let height: i32 = row.try_get("height")?;
+        let format: String = row.try_get("format")?;
+        let color_type: String = row.try_get("color_type")?;
+        let file_size: i64 = row.try_get("file_size")?;
+        let created_at: String = row.try_get("created_at")?;
+        let created_at = DateTime::from_str(&created_at).expect("");
+
+        Ok(ImageMetadata {
+            width: width as u32,
+            height: height as u32,
+            format,
+            color_type,
+            file_size: file_size as u64,
+            created_at,
+        })
+    }
 }
 
 /// A database abstraction for storing and querying image-tag relationships.
@@ -64,14 +91,47 @@ impl Database {
         let stmt = CurrentDialect::ensure_image_statement();
 
         self.retry(|| async {
-            sqlx::query(stmt)
-                .bind(hash.clone().to_string())
+            let query = sqlx::query(stmt).bind(hash.clone().to_string());
+            let sql = query.sql();
+            query
                 .execute(&self.pool)
                 .await
                 .map_err(|e| DatabaseError::QueryFailed {
                     operation: DbOperation::InsertImage { hash: hash.clone() },
-                    sql: stmt.to_string(),
-                    params_string: hash.clone().to_string(),
+                    sql: sql.to_string(),
+                    source: e,
+                })
+        })
+        .await?;
+
+        Ok(())
+    }
+
+    pub async fn ensure_image_has_metadata(
+        &self,
+        hash: &Md5Hash,
+        metadata: &ImageMetadata,
+    ) -> Result<(), DatabaseError> {
+        self.ensure_image(hash).await?;
+
+        self.retry(|| async {
+            let query = sqlx::query(CurrentDialect::ensure_metadata_statement())
+                .bind(hash.clone().to_string())
+                .bind(metadata.width as i64)
+                .bind(metadata.height as i64)
+                .bind(&metadata.format)
+                .bind(&metadata.color_type)
+                .bind(metadata.file_size as i64)
+                .bind(metadata.created_at.to_rfc3339());
+            let sql = query.sql();
+            query
+                .execute(&self.pool)
+                .await
+                .map_err(|e| DatabaseError::QueryFailed {
+                    operation: DbOperation::InsertMetadata {
+                        metadata: metadata.clone(),
+                    },
+                    sql: sql.to_string(),
                     source: e,
                 })
         })
@@ -88,16 +148,16 @@ impl Database {
         let stmt = CurrentDialect::ensure_tag_statement();
 
         self.retry(|| async {
-            sqlx::query(stmt)
-                .bind(tag)
+            let query = sqlx::query(stmt).bind(tag);
+            let sql = query.sql();
+            query
                 .execute(&self.pool)
                 .await
                 .map_err(|e| DatabaseError::QueryFailed {
                     operation: DbOperation::InsertTag {
                         tag: tag.to_string(),
                     },
-                    sql: stmt.to_string(),
-                    params_string: tag.to_string(),
+                    sql: sql.to_string(),
                     source: e,
                 })
         })
@@ -134,7 +194,6 @@ impl Database {
                         tag: tag.to_string(),
                     },
                     sql: stmt.to_string(),
-                    params_string: format!("{},{}", hash.to_string(), tag),
                     source: e,
                 })
         })
@@ -164,7 +223,6 @@ impl Database {
                     .map_err(|e| DatabaseError::QueryFailed {
                         operation: DbOperation::QueryImages,
                         sql: stmt.to_string(),
-                        params_string: params.join(","),
                         source: e,
                     })
             })
@@ -191,13 +249,35 @@ impl Database {
                     .map_err(|e| DatabaseError::QueryFailed {
                         operation: DbOperation::QueryImages,
                         sql: stmt.to_string(),
-                        params_string: hash.to_string(),
                         source: e,
                     })
             })
             .await?;
 
         Ok(rows)
+    }
+
+    pub async fn get_metadata(
+        &self,
+        hash: &Md5Hash,
+    ) -> Result<Option<ImageMetadata>, DatabaseError> {
+        let stmt = CurrentDialect::query_metadata_statement();
+
+        let metadata: Option<ImageMetadata> = self
+            .retry(|| async {
+                sqlx::query_as(&stmt)
+                    .bind(hash.clone().to_string())
+                    .fetch_optional(&self.pool)
+                    .await
+                    .map_err(|e| DatabaseError::QueryFailed {
+                        operation: DbOperation::QueryImages,
+                        sql: stmt.to_string(),
+                        source: e,
+                    })
+            })
+            .await?;
+
+        Ok(metadata)
     }
 
     /// Ensures that a specific tag is removed from the image.
@@ -218,7 +298,6 @@ impl Database {
                         tag: tag.to_string(),
                     },
                     sql: stmt.to_string(),
-                    params_string: format!("{},{}", hash.to_string(), tag),
                     source: e,
                 })
         })
@@ -252,7 +331,6 @@ impl Database {
                 .map_err(|e| DatabaseError::QueryFailed {
                     operation: DbOperation::DeleteImageTags { hash: hash.clone() },
                     sql: stmt_tags.to_string(),
-                    params_string: hash.to_string(),
                     source: e,
                 })?;
 
@@ -263,7 +341,6 @@ impl Database {
                 .map_err(|e| DatabaseError::QueryFailed {
                     operation: DbOperation::DeleteImage { hash: hash.clone() },
                     sql: stmt_image.to_string(),
-                    params_string: hash.to_string(),
                     source: e,
                 })?;
 
@@ -283,11 +360,10 @@ impl Database {
 #[derive(Debug, Error)]
 pub enum DatabaseError {
     /// A general SQL query failure, with full context including operation, SQL and parameters.
-    #[error("Query failed during {operation:?}: sql={sql}, params=[{params_string}]")]
+    #[error("Query failed during {operation:?}: sql={sql}")]
     QueryFailed {
         operation: DbOperation,
         sql: String,
-        params_string: String,
         #[source]
         source: sqlx::Error,
     },
@@ -305,21 +381,40 @@ pub enum DatabaseError {
 #[derive(Debug)]
 pub enum DbOperation {
     /// INSERT INTO images
-    InsertImage { hash: Md5Hash },
+    InsertImage {
+        hash: Md5Hash,
+    },
     /// INSERT INTO tags
-    InsertTag { tag: String },
+    InsertTag {
+        tag: String,
+    },
     /// INSERT INTO image_tags
-    InsertImageTag { hash: Md5Hash, tag: String },
+    InsertImageTag {
+        hash: Md5Hash,
+        tag: String,
+    },
     /// DELETE FROM image_tags WHERE ...
-    DeleteImageTag { hash: Md5Hash, tag: String },
+    DeleteImageTag {
+        hash: Md5Hash,
+        tag: String,
+    },
     /// DELETE FROM images WHERE ...
-    DeleteImage { hash: Md5Hash },
+    DeleteImage {
+        hash: Md5Hash,
+    },
     /// DELETE FROM image_tags WHERE image_hash = ...
-    DeleteImageTags { hash: Md5Hash },
+    DeleteImageTags {
+        hash: Md5Hash,
+    },
     /// SELECT tag_name FROM image_tags WHERE image_hash = ...
-    QueryTags { hash: Md5Hash },
+    QueryTags {
+        hash: Md5Hash,
+    },
     /// General image query using dynamic conditions
     QueryImages,
+    InsertMetadata {
+        metadata: ImageMetadata,
+    },
 }
 
 impl DatabaseError {
@@ -332,7 +427,6 @@ impl DatabaseError {
 
         match self {
             DatabaseError::QueryFailed {
-                params_string: _,
                 sql: _,
                 source,
                 operation: _,
@@ -344,10 +438,14 @@ impl DatabaseError {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
+    use chrono::DateTime;
+
     use crate::{
         database::{Database, Db, Pool},
         query::{Query, QueryExpr},
-        storage::Md5Hash,
+        storage::{ImageMetadata, Md5Hash},
     };
 
     /// Returns an in-memory SQLite connection pool for testing.
@@ -381,6 +479,37 @@ mod tests {
 
         assert!(db.ensure_image(&image).await.is_ok());
         assert!(db.ensure_image(&image).await.is_ok());
+    }
+
+    /// Ensures that inserting the same image multiple times does not result in error.
+    ///
+    /// This tests both insertion success and idempotency:
+    /// `ensure_image` should silently succeed even if the image already exists.
+    #[tokio::test]
+    async fn test_ensure_metadata() {
+        let pool = get_pool().await;
+        let db = Database::with_migration(pool.clone()).await.unwrap();
+
+        let image = Md5Hash::try_from("620a139c9d3e63188299d0150c198bd5").unwrap();
+        let metadata = ImageMetadata {
+            width: 200,
+            height: 200,
+            format: "image/png".to_string(),
+            color_type: "rgba".to_string(),
+            file_size: 1337,
+            created_at: DateTime::from_str("2025-05-02T01:18:49.678809123Z").unwrap(),
+        };
+
+        assert!(
+            db.ensure_image_has_metadata(&image, &metadata)
+                .await
+                .is_ok()
+        );
+        assert!(
+            db.ensure_image_has_metadata(&image, &metadata)
+                .await
+                .is_ok()
+        );
     }
 
     /// Full test of tag operations:

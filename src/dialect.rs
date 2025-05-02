@@ -36,6 +36,8 @@ pub trait Dialect {
     /// Should insert the tag name only if it doesn't already exist.
     fn ensure_tag_statement() -> &'static str;
 
+    fn ensure_metadata_statement() -> &'static str;
+
     /// Returns the SQL statement to ensure a tag is attached to an image.
     ///
     /// Should insert a `(image_hash, tag_name)` pair into the `image_tags` table
@@ -53,6 +55,8 @@ pub trait Dialect {
     ///
     /// Should return a single-column result (`tag_name`).
     fn query_tags_by_image_statement() -> &'static str;
+
+    fn query_metadata_statement() -> &'static str;
 
     /// Returns the SQL statement to remove a tag from an image.
     ///

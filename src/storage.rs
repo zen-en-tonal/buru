@@ -3,8 +3,9 @@
 //! Files are stored under a directory tree derived from the pixel hash.
 //! Duplicate visual content (regardless of file format) is detected and rejected.
 
+pub use chrono::{DateTime, Utc};
 use glob::glob;
-use image::{DynamicImage, ImageFormat, ImageReader};
+use image::{DynamicImage, GenericImageView, ImageFormat, ImageReader};
 use infer;
 use md5;
 use std::{
@@ -131,6 +132,35 @@ impl Storage {
         Ok(())
     }
 
+    pub fn get_metadata(&self, hash: &Md5Hash) -> Result<ImageMetadata, StorageError> {
+        let file_path = self
+            .find_entry(&hash)
+            .ok_or(StorageError::FileNotFound { hash: hash.clone() })?;
+
+        let bytes = std::fs::read(&file_path)?;
+        let format = infer::get(&bytes).ok_or(StorageError::UnsupportedFile { kind: None })?;
+
+        let img = image::load_from_memory(&bytes)?;
+        let (width, height) = img.dimensions();
+        let color_type = format!("{:?}", img.color());
+
+        let metadata = std::fs::metadata(&file_path)?;
+        let created_at = metadata
+            .created()
+            .expect("failed to get created_at: filesystem does not support")
+            .into();
+        let file_size = metadata.len();
+
+        Ok(ImageMetadata {
+            width,
+            height,
+            format: format.mime_type().to_string(),
+            color_type,
+            file_size,
+            created_at,
+        })
+    }
+
     /// Derives a relative directory path from the hash (for indexing).
     /// Example: `01/23/`
     fn derive_dir(&self, hash: &Md5Hash) -> PathBuf {
@@ -163,13 +193,32 @@ impl Storage {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImageMetadata {
+    pub width: u32,
+    pub height: u32,
+    pub format: String,
+    pub color_type: String,
+    pub file_size: u64,
+
+    /// Filesystem-based creation timestamp
+    pub created_at: DateTime<Utc>,
+}
+
 /// Errors that can occur during storage operations.
 #[derive(Debug)]
 pub enum StorageError {
     /// Same pixel hash already exists.
-    HashCollision { existing_path: PathBuf },
+    HashCollision {
+        existing_path: PathBuf,
+    },
     /// File format could not be determined or is unsupported.
-    UnsupportedFile { kind: Option<infer::Type> },
+    UnsupportedFile {
+        kind: Option<infer::Type>,
+    },
+    FileNotFound {
+        hash: Md5Hash,
+    },
     /// Filesystem IO error.
     Io(std::io::Error),
     /// Image decoding or saving error.
@@ -214,6 +263,7 @@ impl Display for StorageError {
             StorageError::Image(inner) => {
                 write!(f, "Image error: {}", inner)
             }
+            StorageError::FileNotFound { hash } => write!(f, "File not found: {}", hash),
         }
     }
 }
@@ -435,5 +485,16 @@ mod tests {
                 )
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn test_get_metadata() {
+        let tmp_dir = TempDir::new().unwrap();
+        let storage = Storage::new(tmp_dir.path().to_path_buf());
+
+        let file_bytes = include_bytes!("../testdata/620a139c9d3e63188299d0150c198bd5.png");
+        let hash = storage.create_file(file_bytes).unwrap();
+
+        println!("{:?}", storage.get_metadata(&hash));
     }
 }
