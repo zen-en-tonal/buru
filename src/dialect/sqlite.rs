@@ -49,7 +49,7 @@ impl Dialect for SqliteDialect {
     }
 
     fn delete_image_statement() -> &'static str {
-        "DELETE FROM image WHERE hash = ?"
+        "DELETE FROM images WHERE hash = ?"
     }
 
     fn delete_tags_by_image_statement() -> &'static str {

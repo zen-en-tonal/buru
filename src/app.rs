@@ -11,7 +11,7 @@ pub async fn archive_image(
     db: &Database,
     bytes: &[u8],
     tags: &[String],
-) -> Result<Md5Hash, AppError> {
+) -> Result<Image, AppError> {
     let hash = storage.create_file(bytes)?;
     let metadata = storage.get_metadata(&hash)?;
 
@@ -19,7 +19,7 @@ pub async fn archive_image(
     db.ensure_image_has_metadata(&hash, &metadata).await?;
     attach_tags(db, &hash, tags).await?;
 
-    Ok(hash)
+    find_image_by_hash(db, storage, hash).await
 }
 
 pub async fn attach_tags(db: &Database, hash: &Md5Hash, tags: &[String]) -> Result<(), AppError> {
@@ -76,33 +76,37 @@ pub async fn query_image(
     storage: &Storage,
     query: Query,
 ) -> Result<Vec<Image>, AppError> {
+    // Step 1: Execute the query to get matching image hashes, in order
     let hashes = db.find_by_query(query).await?;
 
+    // Step 2: Spawn parallel tasks to retrieve images by hash
     let mut set = JoinSet::new();
     for hash in hashes.clone() {
         let db = db.clone();
         let storage = storage.clone();
         set.spawn(async move {
+            // Load image data (from storage and metadata from DB) by hash
             let image = find_image_by_hash(&db, &storage, hash.clone()).await?;
-
             Ok::<(Md5Hash, Image), AppError>((hash, image))
         });
     }
 
+    // Step 3: Collect results from all parallel tasks into a hash map
     let mut map = HashMap::new();
     while let Some(result) = set.join_next().await {
         match result {
             Ok(Ok((hash, image))) => {
-                map.insert(hash, image);
+                map.insert(hash, image); // Store successfully loaded images
             }
-            Ok(Err(e)) => return Err(e),
+            Ok(Err(e)) => return Err(e), // Propagate application-level error
             Err(join_err) => panic!("task panicked in image retrieval: {join_err}"),
         }
     }
 
+    // Step 4: Preserve query order by using original hash list and extracting images in order
     let images = hashes
         .into_iter()
-        .filter_map(|h| map.remove(&h)) // to avoid duplication.
+        .filter_map(|h| map.remove(&h)) // Skip if any image failed to load
         .collect();
 
     Ok(images)
@@ -131,7 +135,7 @@ pub enum AppError {
 #[cfg(test)]
 mod tests {
     use crate::{
-        app::{archive_image, query_image},
+        app::{archive_image, query_image, remove_image},
         database::{Database, Pool},
         query::{Query, QueryExpr},
         storage::Storage,
@@ -163,5 +167,18 @@ mod tests {
         let res = query_image(&db, &storage, query).await.unwrap();
 
         dbg!(res);
+    }
+
+    #[tokio::test]
+    async fn test_remove_image() {
+        let db = get_db().await;
+        let storage = get_storage();
+        let file_bytes = include_bytes!("../testdata/620a139c9d3e63188299d0150c198bd5.png");
+
+        let image = archive_image(&storage, &db, file_bytes, &["cat".to_string()])
+            .await
+            .unwrap();
+
+        remove_image(&storage, &db, image.hash).await.unwrap();
     }
 }
