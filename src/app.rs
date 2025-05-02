@@ -16,12 +16,31 @@ pub async fn archive_image(
     let metadata = storage.get_metadata(&hash)?;
 
     db.ensure_image(&hash).await?;
-    for tag in tags {
-        db.ensure_image_has_tag(&hash, tag).await?;
-    }
     db.ensure_image_has_metadata(&hash, &metadata).await?;
+    attach_tags(db, &hash, tags).await?;
 
     Ok(hash)
+}
+
+pub async fn attach_tags(db: &Database, hash: &Md5Hash, tags: &[String]) -> Result<(), AppError> {
+    let mut set = JoinSet::new();
+
+    for tag in tags {
+        let db = db.clone();
+        let hash = hash.clone();
+        let tag = tag.to_string();
+        set.spawn(async move { db.ensure_image_has_tag(&hash, &tag).await });
+    }
+
+    while let Some(result) = set.join_next().await {
+        match result {
+            Ok(Ok(())) => (),
+            Ok(Err(e)) => return Err(AppError::Database(e)),
+            Err(join_err) => panic!("task panicked in image retrieval: {join_err}"),
+        }
+    }
+
+    Ok(())
 }
 
 pub async fn remove_image(storage: &Storage, db: &Database, hash: Md5Hash) -> Result<(), AppError> {
