@@ -6,20 +6,50 @@ use crate::{
 use std::{collections::HashMap, path::PathBuf};
 use tokio::task::JoinSet;
 
-pub async fn archive_image(
-    storage: &Storage,
-    db: &Database,
-    bytes: &[u8],
-    tags: &[String],
-) -> Result<Image, AppError> {
-    let hash = storage.create_file(bytes)?;
-    let metadata = storage.get_metadata(&hash)?;
+pub struct ArchiveImageCommand {
+    pub bytes: Vec<u8>,
+    pub tags: Vec<String>,
+    pub source: Option<String>,
+}
 
-    db.ensure_image(&hash).await?;
-    db.ensure_image_has_metadata(&hash, &metadata).await?;
-    attach_tags(db, &hash, tags).await?;
+impl ArchiveImageCommand {
+    pub fn new(bytes: &[u8]) -> Self {
+        ArchiveImageCommand {
+            bytes: bytes.to_vec(),
+            tags: vec![],
+            source: None,
+        }
+    }
 
-    find_image_by_hash(db, storage, hash).await
+    pub fn with_tags<T: IntoIterator<Item = String>>(mut self, tags: T) -> Self {
+        self.tags = tags.into_iter().collect();
+
+        self
+    }
+
+    pub fn with_source(mut self, src: &str) -> Self {
+        self.source = Some(src.to_string());
+
+        self
+    }
+
+    pub async fn execute(self, storage: &Storage, db: &Database) -> Result<Image, AppError> {
+        let hash = storage.create_file(&self.bytes)?;
+        let metadata = storage.get_metadata(&hash)?;
+
+        db.ensure_image(&hash).await?;
+        db.ensure_image_has_metadata(&hash, &metadata).await?;
+
+        if self.tags.len() > 0 {
+            attach_tags(db, &hash, &self.tags).await?;
+        }
+
+        if let Some(src) = self.source {
+            attach_source(db, &hash, &src).await?;
+        }
+
+        find_image_by_hash(db, storage, hash).await
+    }
 }
 
 pub async fn attach_tags(db: &Database, hash: &Md5Hash, tags: &[String]) -> Result<(), AppError> {
@@ -43,6 +73,13 @@ pub async fn attach_tags(db: &Database, hash: &Md5Hash, tags: &[String]) -> Resu
     Ok(())
 }
 
+pub async fn attach_source(db: &Database, hash: &Md5Hash, src: &str) -> Result<(), AppError> {
+    db.ensure_image(hash).await?;
+    db.ensure_image_has_source(hash, src).await?;
+
+    Ok(())
+}
+
 pub async fn remove_image(storage: &Storage, db: &Database, hash: Md5Hash) -> Result<(), AppError> {
     db.ensure_image_removed(&hash).await?;
     storage.ensure_deleted(&hash)?;
@@ -61,13 +98,19 @@ pub async fn find_image_by_hash(
 
     let tags = db.get_tags(&hash).await?;
 
-    let metadata = db.get_metadata(&hash).await?.expect("");
+    let metadata = db
+        .get_metadata(&hash)
+        .await?
+        .expect("Failed to get metadata");
+
+    let source = db.get_source(&hash).await?;
 
     Ok(Image {
         path,
         hash,
         tags,
         metadata,
+        source,
     })
 }
 
@@ -118,6 +161,7 @@ pub struct Image {
     hash: Md5Hash,
     metadata: ImageMetadata,
     tags: Vec<String>,
+    source: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -135,7 +179,7 @@ pub enum AppError {
 #[cfg(test)]
 mod tests {
     use crate::{
-        app::{archive_image, query_image, remove_image},
+        app::{ArchiveImageCommand, query_image, remove_image},
         database::{Database, Pool},
         query::{Query, QueryExpr},
         storage::Storage,
@@ -158,7 +202,10 @@ mod tests {
         let storage = get_storage();
         let file_bytes = include_bytes!("../testdata/620a139c9d3e63188299d0150c198bd5.png");
 
-        archive_image(&storage, &db, file_bytes, &["cat".to_string()])
+        ArchiveImageCommand::new(file_bytes)
+            .with_tags(["cat".to_string()])
+            .with_source("https://example.com")
+            .execute(&storage, &db)
             .await
             .unwrap();
 
@@ -175,7 +222,10 @@ mod tests {
         let storage = get_storage();
         let file_bytes = include_bytes!("../testdata/620a139c9d3e63188299d0150c198bd5.png");
 
-        let image = archive_image(&storage, &db, file_bytes, &["cat".to_string()])
+        let image = ArchiveImageCommand::new(file_bytes)
+            .with_tags(["cat".to_string()])
+            .with_source("https://example.com")
+            .execute(&storage, &db)
             .await
             .unwrap();
 

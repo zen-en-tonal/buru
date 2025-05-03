@@ -44,6 +44,10 @@ impl Dialect for SqliteDialect {
         "SELECT * FROM image_metadatas WHERE image_hash = ?"
     }
 
+    fn query_source_statement() -> &'static str {
+        "SELECT source FROM images WHERE hash = ?"
+    }
+
     fn delete_image_tag_statement() -> &'static str {
         "DELETE FROM image_tags WHERE image_hash = ? AND tag_name = ?"
     }
@@ -73,7 +77,8 @@ impl Dialect for SqliteDialect {
     fn migration() -> Vec<&'static str> {
         vec![
             r#"CREATE TABLE IF NOT EXISTS images (
-                hash TEXT PRIMARY KEY
+                hash TEXT PRIMARY KEY,
+                source TEXT
             );"#,
             r#"CREATE TABLE IF NOT EXISTS image_metadatas (
                 image_hash TEXT,
@@ -100,5 +105,9 @@ impl Dialect for SqliteDialect {
                 AS SELECT * FROM images
                 LEFT JOIN image_metadatas ON images.hash = image_metadatas.image_hash;"#,
         ]
+    }
+
+    fn update_source_statement() -> &'static str {
+        "UPDATE images SET source = ? WHERE hash = ?"
     }
 }

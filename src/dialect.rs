@@ -42,6 +42,10 @@ pub trait Dialect {
 
     fn ensure_metadata_statement() -> &'static str;
 
+    fn update_source_statement() -> &'static str;
+
+    fn query_source_statement() -> &'static str;
+
     /// Returns the SQL statement to ensure a tag is attached to an image.
     ///
     /// Should insert a `(image_hash, tag_name)` pair into the `image_tags` table

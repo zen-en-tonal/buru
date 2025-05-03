@@ -202,6 +202,36 @@ impl Database {
         Ok(())
     }
 
+    pub async fn ensure_image_has_source(
+        &self,
+        hash: &Md5Hash,
+        source: &str,
+    ) -> Result<(), DatabaseError> {
+        self.ensure_image(hash).await?;
+
+        self.retry(|| async {
+            let query = sqlx::query(CurrentDialect::update_source_statement())
+                .bind(hash.clone().to_string())
+                .bind(source);
+            let sql = query.sql();
+
+            query
+                .execute(&self.pool)
+                .await
+                .map_err(|e| DatabaseError::QueryFailed {
+                    operation: DbOperation::UpdateImageSource {
+                        hash: hash.clone(),
+                        source: source.to_string(),
+                    },
+                    sql: sql.to_string(),
+                    source: e,
+                })
+        })
+        .await?;
+
+        Ok(())
+    }
+
     /// Performs a tag-based query on images using a [`Query`] expression tree.
     ///
     /// Returns a list of image hashes that match the query.
@@ -278,6 +308,27 @@ impl Database {
             .await?;
 
         Ok(metadata)
+    }
+
+    pub async fn get_source(&self, hash: &Md5Hash) -> Result<Option<String>, DatabaseError> {
+        let soruce: Option<String> = self
+            .retry(|| async {
+                let query = sqlx::query_scalar(CurrentDialect::query_source_statement())
+                    .bind(hash.clone().to_string());
+                let sql = query.sql();
+
+                query
+                    .fetch_optional(&self.pool)
+                    .await
+                    .map_err(|e| DatabaseError::QueryFailed {
+                        operation: DbOperation::QueryImages,
+                        sql: sql.to_string(),
+                        source: e,
+                    })
+            })
+            .await?;
+
+        Ok(soruce)
     }
 
     /// Ensures that a specific tag is removed from the image.
@@ -414,6 +465,10 @@ pub enum DbOperation {
     QueryImages,
     InsertMetadata {
         metadata: ImageMetadata,
+    },
+    UpdateImageSource {
+        hash: Md5Hash,
+        source: String,
     },
 }
 
@@ -568,7 +623,7 @@ mod tests {
         let query_cat_and_dog = Query::new(QueryExpr::tag("cat").and(QueryExpr::tag("dog")));
 
         assert_eq!(
-            vec![image_cat, image_cat_and_dog.clone()],
+            vec![image_cat_and_dog.clone(), image_cat.clone()],
             db.find_by_query(query_cat).await.unwrap()
         );
 
