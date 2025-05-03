@@ -8,7 +8,7 @@ use crate::dialect::{CurrentDialect, Dialect};
 use chrono::{DateTime, Utc};
 
 /// Represents a logical tag-based query expression.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum QueryExpr {
     /// A single tag condition.
     Tag(String),
