@@ -6,12 +6,10 @@ use nom::{
     bytes::complete::{tag as t, take_while1},
     character::complete::{char, multispace0},
     combinator::opt,
-    error::context,
     multi::many0,
     sequence::{delimited, preceded},
 };
 use std::str::FromStr;
-use thiserror::Error;
 
 // <query>    ::= <or_expr>
 // <or_expr>  ::= <and_expr> { "OR" <and_expr> }
