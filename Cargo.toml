@@ -11,13 +11,25 @@ infer = "0.19.0"
 md5 = "0.7.0"
 sqlx = { version = "0.8", features = [ "runtime-tokio" ] }
 thiserror = "2.0.12"
-tokio = { version = "1.44.2", features = ["rt", "macros"] }
+tokio = { version = "1.44.2", features = ["rt", "macros", "rt-multi-thread"] }
 nom = "8.0.0"
+axum = "0.8.4"
+serde = { version = "1.0.219", features = ["derive", "serde_derive"] }
+tracing-subscriber = "0.3.19"
+clap = { version = "4", features = ["derive"] }
 
 [dev-dependencies]
 tempfile = "3.19.1"
 
 [features]
 default = ["sqlite"]
-
 sqlite = ["sqlx/sqlite"]
+
+[[bin]]
+name = "web"
+path = "web/main.rs"
+
+[[bin]]
+name = "cli"
+path = "cli/main.rs"
+

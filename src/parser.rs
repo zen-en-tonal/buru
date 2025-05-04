@@ -158,12 +158,4 @@ mod tests {
             parse_query(input).unwrap()
         );
     }
-
-    #[test]
-    fn test_parse_error() {
-        let input = "cat AND OR dog";
-        let res = parse_query(input);
-
-        dbg!(res);
-    }
 }

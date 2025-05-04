@@ -49,10 +49,10 @@ impl Storage {
     /// # Examples
     ///
     /// ```
-    /// # use buru::Storage;
-    /// # use std::path::PathBuf;
-    /// let storage = Storage::new(PathBuf::from("/tmp/storage"));
-    /// let bytes = include_bytes!("../testdata/sample.png");
+    /// # use buru::storage::Storage;
+    /// # use tempfile::TempDir;
+    /// let storage = Storage::new(TempDir::new().unwrap().path().to_path_buf());
+    /// let bytes = include_bytes!("../testdata/620a139c9d3e63188299d0150c198bd5.png");
     /// let hash = storage.create_file(bytes).unwrap();
     /// println!("File stored with pixel hash: {:?}", hash);
     /// ```

@@ -495,7 +495,7 @@ impl DatabaseError {
 mod tests {
     use crate::{
         database::{Database, Db, Pool},
-        query::{Query, QueryExpr},
+        query::{Query, QueryExpr, QueryKind},
         storage::{ImageMetadata, Md5Hash},
     };
     use chrono::DateTime;
@@ -618,9 +618,11 @@ mod tests {
                 .is_ok()
         );
 
-        let query_cat = Query::new(QueryExpr::tag("cat"));
-        let query_dog = Query::new(QueryExpr::tag("dog"));
-        let query_cat_and_dog = Query::new(QueryExpr::tag("cat").and(QueryExpr::tag("dog")));
+        let query_cat = Query::new(QueryKind::Where(QueryExpr::tag("cat")));
+        let query_dog = Query::new(QueryKind::Where(QueryExpr::tag("dog")));
+        let query_cat_and_dog = Query::new(QueryKind::Where(
+            QueryExpr::tag("cat").and(QueryExpr::tag("dog")),
+        ));
 
         assert_eq!(
             vec![image_cat_and_dog.clone(), image_cat.clone()],

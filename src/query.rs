@@ -93,11 +93,30 @@ impl QueryExpr {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum QueryKind {
+    All,
+    Where(QueryExpr),
+}
+
+impl QueryKind {
+    pub fn to_sql(&self) -> (String, Vec<String>) {
+        match self {
+            QueryKind::All => ("".to_string(), vec![]),
+            QueryKind::Where(query_expr) => {
+                let (sql, params) = query_expr.to_sql();
+
+                (format!("WHERE {}", sql), params)
+            }
+        }
+    }
+}
+
 /// Represents a full query including logical expression and pagination.
 #[derive(Debug, Clone)]
 pub struct Query {
     /// The logical expression used for filtering.
-    pub expr: QueryExpr,
+    pub expr: QueryKind,
 
     /// The maximum number of results to return.
     pub limit: Option<u32>,
@@ -108,7 +127,7 @@ pub struct Query {
 
 impl Query {
     /// Creates a new query from a query expression.
-    pub fn new(expr: QueryExpr) -> Self {
+    pub fn new(expr: QueryKind) -> Self {
         Self {
             expr,
             limit: None,
@@ -156,20 +175,22 @@ impl Query {
 
 #[cfg(test)]
 mod tests {
+    use crate::query::QueryKind;
+
     use super::{CurrentDialect, Dialect, Query, QueryExpr};
     use chrono::DateTime;
     use std::str::FromStr;
 
     #[test]
     fn test_build_query() {
-        let query = Query::new(
+        let query = Query::new(QueryKind::Where(
             QueryExpr::tag("cat")
                 .and(QueryExpr::tag("cute"))
                 .or(QueryExpr::not(QueryExpr::tag("dog")))
                 .and(QueryExpr::date_until(
                     DateTime::from_str("2025-05-02T01:18:49.678809123+00:00").unwrap(),
                 )),
-        )
+        ))
         .with_limit(10)
         .with_offset(20);
 
@@ -177,7 +198,7 @@ mod tests {
 
         assert_eq!(
             format!(
-                "((({} AND {}) OR NOT {}) AND {}) LIMIT {} OFFSET {}",
+                "WHERE ((({} AND {}) OR NOT {}) AND {}) LIMIT {} OFFSET {}",
                 CurrentDialect::exists_tag_query(1),
                 CurrentDialect::exists_tag_query(2),
                 CurrentDialect::exists_tag_query(3),

@@ -157,11 +157,11 @@ pub async fn query_image(
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Image {
-    path: PathBuf,
-    hash: Md5Hash,
-    metadata: ImageMetadata,
-    tags: Vec<String>,
-    source: Option<String>,
+    pub path: PathBuf,
+    pub hash: Md5Hash,
+    pub metadata: ImageMetadata,
+    pub tags: Vec<String>,
+    pub source: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -181,7 +181,7 @@ mod tests {
     use crate::{
         app::{ArchiveImageCommand, query_image, remove_image},
         database::{Database, Pool},
-        query::{Query, QueryExpr},
+        query::{Query, QueryExpr, QueryKind},
         storage::Storage,
     };
     use tempfile::TempDir;
@@ -209,7 +209,7 @@ mod tests {
             .await
             .unwrap();
 
-        let query = Query::new(QueryExpr::tag("cat"));
+        let query = Query::new(QueryKind::Where(QueryExpr::tag("cat")));
 
         let res = query_image(&db, &storage, query).await.unwrap();
 

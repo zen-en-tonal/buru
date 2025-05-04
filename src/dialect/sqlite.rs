@@ -33,7 +33,7 @@ impl Dialect for SqliteDialect {
     }
 
     fn query_image_statement(condition: String) -> String {
-        format!("SELECT hash FROM image_with_metadata WHERE {}", condition)
+        format!("SELECT hash FROM image_with_metadata {}", condition)
     }
 
     fn query_tags_by_image_statement() -> &'static str {
