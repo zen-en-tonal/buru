@@ -137,7 +137,7 @@ pub async fn get_posts(
         tags.into_iter()
             .map(query::QueryExpr::Tag)
             .reduce(query::QueryExpr::and)
-            .map(|expr| QueryKind::Where(expr))
+            .map(QueryKind::Where)
             .unwrap_or(QueryKind::All),
     )
     .with_limit(params.limit.unwrap_or(20))

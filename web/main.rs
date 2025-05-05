@@ -44,7 +44,7 @@ impl AppConfig {
         let db = Database::with_migration(Pool::connect(&self.database_url).await.unwrap())
             .await
             .unwrap();
-        let storage = Storage::new(PathBuf::from(self.image_dir.clone()));
+        let storage = Storage::new(self.image_dir.clone());
 
         AppState {
             db: Arc::new(db),

@@ -383,7 +383,7 @@ mod tests {
             Md5Hash::try_from("Z29435e5e66be809a656af105f42401e".to_string())
         );
         assert_eq!(
-            67230952906579160527917458089239003166 as u128,
+            67230952906579160527917458089239003166_u128,
             Md5Hash::try_from("329435e5e66be809a656af105f42401e")
                 .unwrap()
                 .into()

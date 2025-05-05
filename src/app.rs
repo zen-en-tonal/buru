@@ -40,7 +40,7 @@ impl ArchiveImageCommand {
         db.ensure_image(&hash).await?;
         db.ensure_image_has_metadata(&hash, &metadata).await?;
 
-        if self.tags.len() > 0 {
+        if !self.tags.is_empty() {
             attach_tags(db, &hash, &self.tags).await?;
         }
 
