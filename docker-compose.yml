@@ -9,8 +9,9 @@ services:
       - CDN_BASE_URL=http://localhost/files
     volumes:
       - ./static/images:/app/static/images
-    ports:
-      - "3000:3000"
+      - ./db:/app/db
+    env_file:
+      - .env
 
   nginx:
     image: nginx:latest

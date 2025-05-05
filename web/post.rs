@@ -159,18 +159,18 @@ pub async fn get_post(
 ) -> Result<Json<PostResponse>, PostError> {
     let hash = Md5Hash::from(id);
 
-    let image = find_image_by_hash(&app.db, &app.storage, hash)
-        .await
-        .map_err(|_e| PostError)?;
+    let image = find_image_by_hash(&app.db, &app.storage, hash).await?;
 
     Ok(Json(PostResponse::from_image(app.config, image)))
 }
 
-pub struct PostError;
+pub struct PostError {
+    inner: AppError,
+}
 
 impl From<AppError> for PostError {
     fn from(value: AppError) -> Self {
-        todo!()
+        PostError { inner: value }
     }
 }
 
@@ -181,12 +181,30 @@ impl IntoResponse for PostError {
             message: String,
         }
 
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                message: "".to_string(),
-            }),
-        )
-            .into_response()
+        let (status, message) = match self.inner {
+            AppError::Storage(storage_error) => match storage_error {
+                buru::storage::StorageError::HashCollision { existing_path } => (
+                    StatusCode::CONFLICT,
+                    existing_path.to_string_lossy().to_string(),
+                ),
+                buru::storage::StorageError::UnsupportedFile { kind: _ } => unreachable!(),
+                buru::storage::StorageError::FileNotFound { hash } => {
+                    (StatusCode::NOT_FOUND, hash.to_string())
+                }
+                buru::storage::StorageError::Io(error) => {
+                    (StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
+                }
+                buru::storage::StorageError::Image(image_error) => {
+                    (StatusCode::INTERNAL_SERVER_ERROR, image_error.to_string())
+                }
+            },
+            AppError::Database(database_error) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                database_error.to_string(),
+            ),
+            AppError::StorageNotFound { hash } => (StatusCode::NOT_FOUND, hash.to_string()),
+        };
+
+        (status, Json(ErrorResponse { message })).into_response()
     }
 }
