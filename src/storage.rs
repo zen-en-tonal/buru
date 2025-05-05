@@ -152,7 +152,7 @@ impl Storage {
         Ok(ImageMetadata {
             width,
             height,
-            format: format.mime_type().to_string(),
+            format: format.extension().to_string(),
             color_type,
             file_size,
             created_at,
@@ -340,6 +340,18 @@ impl From<Md5Hash> for String {
     }
 }
 
+impl From<Md5Hash> for u128 {
+    fn from(value: Md5Hash) -> Self {
+        u128::from_be_bytes(value.0)
+    }
+}
+
+impl From<u128> for Md5Hash {
+    fn from(value: u128) -> Self {
+        Md5Hash(value.to_be_bytes())
+    }
+}
+
 /// Computes a pixel hash from a DynamicImage.
 fn compute_pixel_hash(img: &DynamicImage) -> Md5Hash {
     let pixels = img.to_rgba8().into_raw();
@@ -350,9 +362,8 @@ fn compute_pixel_hash(img: &DynamicImage) -> Md5Hash {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::PathBuf};
-
     use crate::storage::{Md5Hash, Md5HashParseError, Storage, StorageError};
+    use std::{fs, path::PathBuf};
     use tempfile::TempDir;
 
     #[test]
@@ -371,6 +382,12 @@ mod tests {
             Err(Md5HashParseError::InvalidHex),
             Md5Hash::try_from("Z29435e5e66be809a656af105f42401e".to_string())
         );
+        assert_eq!(
+            67230952906579160527917458089239003166 as u128,
+            Md5Hash::try_from("329435e5e66be809a656af105f42401e")
+                .unwrap()
+                .into()
+        )
     }
 
     #[test]
