@@ -1,23 +1,17 @@
 use axum::{
     Json,
-    extract::{Query, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
 };
 use buru::{
-    app::{AppError, Image, query_image},
-    database::Database,
+    app::{AppError, Image, find_image_by_hash, query_image},
     query::{self, QueryKind},
-    storage::Storage,
+    storage::Md5Hash,
 };
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 
-#[derive(Clone)]
-pub struct AppState {
-    pub db: Arc<Database>,
-    pub storage: Arc<Storage>,
-}
+use crate::{AppConfig, AppState};
 
 #[derive(Deserialize)]
 pub struct PostQuery {
@@ -28,7 +22,7 @@ pub struct PostQuery {
 
 #[derive(Serialize, Debug)]
 pub struct PostResponse {
-    pub id: String,
+    pub id: u128,
     pub created_at: String,
     pub updated_at: String,
     pub uploader_id: u32,
@@ -73,12 +67,17 @@ pub struct PostResponse {
     pub bit_flags: u32,
 }
 
-impl From<Image> for PostResponse {
-    fn from(value: Image) -> Self {
+impl PostResponse {
+    fn from_image(config: AppConfig, value: Image) -> Self {
+        let file_url = config
+            .cdn_base_url
+            .join(value.path)
+            .to_string_lossy()
+            .to_string();
         PostResponse {
-            id: value.hash.clone().to_string(),
+            id: value.hash.clone().into(),
             tag_string: value.tags.join(" "),
-            file_url: Some(value.path.to_string_lossy().to_string()),
+            file_url: Some(file_url.to_string()),
             created_at: value.metadata.created_at.to_rfc3339(),
             updated_at: value.metadata.created_at.to_rfc3339(),
             uploader_id: 0,
@@ -93,7 +92,7 @@ impl From<Image> for PostResponse {
             pixiv_id: None,
             source: value.source.unwrap_or_default(),
             md5: Some(value.hash.to_string()),
-            large_file_url: Some(value.path.to_string_lossy().to_string()),
+            large_file_url: Some(file_url.to_string()),
             preview_file_url: None,
             file_ext: value.metadata.format,
             file_size: value.metadata.file_size as u32,
@@ -146,7 +145,25 @@ pub async fn get_posts(
 
     let results = query_image(&app.db, &app.storage, query).await?;
 
-    Ok(Json(results.into_iter().map(PostResponse::from).collect()))
+    Ok(Json(
+        results
+            .into_iter()
+            .map(|image| PostResponse::from_image(app.config.clone(), image))
+            .collect(),
+    ))
+}
+
+pub async fn get_post(
+    State(app): State<AppState>,
+    Path(id): Path<u128>,
+) -> Result<Json<PostResponse>, PostError> {
+    let hash = Md5Hash::from(id);
+
+    let image = find_image_by_hash(&app.db, &app.storage, hash)
+        .await
+        .map_err(|_e| PostError)?;
+
+    Ok(Json(PostResponse::from_image(app.config, image)))
 }
 
 pub struct PostError;

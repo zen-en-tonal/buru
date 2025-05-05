@@ -1,3 +1,4 @@
+#[cfg(feature = "sqlite")]
 mod sqlite;
 
 /// The current SQL dialect used at compile time, determined by feature flags.

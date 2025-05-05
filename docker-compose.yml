@@ -1,0 +1,23 @@
+version: "3.9"
+services:
+  app:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: mybooru-web
+    environment:
+      - CDN_BASE_URL=http://localhost/files
+    volumes:
+      - ./static/images:/app/static/images
+    ports:
+      - "3000:3000"
+
+  nginx:
+    image: nginx:latest
+    volumes:
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf
+      - ./static/images:/usr/share/nginx/html/files:ro
+    ports:
+      - "80:80"
+    depends_on:
+      - app

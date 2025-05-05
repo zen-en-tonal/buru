@@ -297,6 +297,7 @@ dependencies = [
  "axum",
  "chrono",
  "clap",
+ "dotenvy",
  "glob",
  "image",
  "infer",
