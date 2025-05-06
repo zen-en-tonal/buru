@@ -1,7 +1,7 @@
 mod image;
 mod tag;
 
-use axum::extract::{Path, State};
+use axum::extract::{DefaultBodyLimit, Path, State};
 use axum::http::{Response, StatusCode};
 use axum::response::IntoResponse;
 use axum::{Router, routing::get};
@@ -16,6 +16,7 @@ pub struct AppConfig {
     pub cdn_base_url: PathBuf,
     pub image_dir: PathBuf,
     pub port: u16,
+    pub body_limit: usize,
 }
 
 impl AppConfig {
@@ -34,6 +35,10 @@ impl AppConfig {
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(3000),
+            body_limit: env::var("BODY_LIMIT")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(20 * 1024 * 1024), // 20 MB
         }
     }
 
@@ -68,15 +73,16 @@ async fn main() {
 
     let config = AppConfig::from_env();
     config.create_database().await;
-    let state = config.into_state().await;
-    let addr = format!("0.0.0.0:{}", state.config.port);
+
+    let addr = format!("0.0.0.0:{}", config.port);
 
     let app = Router::new()
         .route("/images", get(image::get_images).post(image::post_image))
         .route("/images/{id}", get(image::get_image))
         .route("/tags", get(tag::get_tags))
         .route("/files/{*hash}", get(serve_file))
-        .with_state(state);
+        .layer(DefaultBodyLimit::max(config.body_limit))
+        .with_state(config.into_state().await);
 
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
