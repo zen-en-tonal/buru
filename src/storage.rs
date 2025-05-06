@@ -144,7 +144,7 @@ impl Storage {
 
         let metadata = std::fs::metadata(&file_path)?;
         let created_at = metadata
-            .created()
+            .modified()
             .expect("failed to get created_at: filesystem does not support")
             .into();
         let file_size = metadata.len();
