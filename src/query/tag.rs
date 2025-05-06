@@ -20,6 +20,10 @@ impl TagQueryExpr {
         Self::And(Box::new(self), Box::new(other))
     }
 
+    pub fn or(self, other: TagQueryExpr) -> Self {
+        Self::Or(Box::new(self), Box::new(other))
+    }
+
     pub fn to_sql(&self) -> (String, Vec<String>) {
         let mut params = Vec::new();
         let sql = self.build_sql(&mut params);

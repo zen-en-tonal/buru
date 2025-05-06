@@ -60,7 +60,7 @@ pub async fn get_tags(
     let query = query::TagQuery::new(
         tags.into_iter()
             .map(TagQueryExpr::Exact)
-            .reduce(TagQueryExpr::and)
+            .reduce(TagQueryExpr::or)
             .map(TagQueryKind::Where)
             .unwrap_or(TagQueryKind::All),
     )
