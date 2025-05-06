@@ -106,6 +106,25 @@ impl ImageQueryKind {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum OrderBy {
+    CreatedAtAsc,
+    CreatedAtDesc,
+    FileSizeAsc,
+    FileSizeDesc,
+}
+
+impl OrderBy {
+    fn to_sql(&self) -> &'static str {
+        match self {
+            OrderBy::CreatedAtAsc => " ORDER BY created_at ASC",
+            OrderBy::CreatedAtDesc => " ORDER BY created_at DESC",
+            OrderBy::FileSizeAsc => " ORDER BY file_size ASC",
+            OrderBy::FileSizeDesc => " ORDER BY file_size DESC",
+        }
+    }
+}
+
 /// Represents a full query including logical expression and pagination.
 #[derive(Debug, Clone)]
 pub struct ImageQuery {
@@ -117,6 +136,8 @@ pub struct ImageQuery {
 
     /// The offset into the result set.
     pub offset: Option<u32>,
+
+    pub order: Option<OrderBy>,
 }
 
 impl ImageQuery {
@@ -126,6 +147,7 @@ impl ImageQuery {
             expr,
             limit: None,
             offset: None,
+            order: None,
         }
     }
 
@@ -141,6 +163,11 @@ impl ImageQuery {
         self
     }
 
+    pub fn with_order(mut self, order: OrderBy) -> Self {
+        self.order = Some(order);
+        self
+    }
+
     /// Converts the full query into an SQL string and bound parameters.
     ///
     /// # Returns
@@ -149,6 +176,13 @@ impl ImageQuery {
     /// The generated SQL includes any specified LIMIT or OFFSET.
     pub fn to_sql(&self) -> (String, Vec<String>) {
         let (mut where_sql, mut params) = self.expr.to_sql();
+
+        where_sql.push_str(
+            self.order
+                .clone()
+                .unwrap_or(OrderBy::CreatedAtDesc)
+                .to_sql(),
+        );
 
         if let Some(limit) = self.limit {
             params.push(limit.to_string());
@@ -190,7 +224,7 @@ mod tests {
 
         assert_eq!(
             format!(
-                "WHERE ((({} AND {}) OR NOT {}) AND {}) LIMIT {} OFFSET {}",
+                "WHERE ((({} AND {}) OR NOT {}) AND {}) ORDER BY created_at DESC LIMIT {} OFFSET {}",
                 CurrentDialect::exists_tag_query(1),
                 CurrentDialect::exists_tag_query(2),
                 CurrentDialect::exists_tag_query(3),
