@@ -80,7 +80,7 @@ async fn main() {
         .route("/images", get(image::get_images).post(image::post_image))
         .route("/images/{id}", get(image::get_image))
         .route("/tags", get(tag::get_tags))
-        .route("/files/{*hash}", get(serve_file))
+        .route("/files/{vari}/{*hash}", get(serve_file))
         .layer(DefaultBodyLimit::max(config.body_limit))
         .with_state(config.into_state().await);
 
@@ -88,7 +88,10 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
-async fn serve_file(State(state): State<AppState>, Path(hash): Path<String>) -> impl IntoResponse {
+async fn serve_file(
+    State(state): State<AppState>,
+    Path((_vari, hash)): Path<(String, String)>,
+) -> impl IntoResponse {
     let path = state.config.image_dir.join(PathBuf::from(hash));
 
     match fs::read(path) {

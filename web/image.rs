@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use crate::{AppConfig, AppState};
 use axum::{
     Json,
@@ -88,35 +90,34 @@ pub struct MediaAsset {
 }
 
 impl MediaAsset {
-    fn from_image(value: Image, url: &str) -> Self {
-        let created_at = value
+    fn from_image(image: &Image, variants: &Variants) -> Self {
+        let created_at = image
             .metadata
             .created_at
             .map(|e| e.to_rfc3339())
             .unwrap_or_default();
-        let hash = value.clone().hash;
-        let variant = Variant::from_image(value.clone(), url);
+        let hash = image.clone().hash;
 
         Self {
-            id: value.hash.to_signed(),
+            id: image.hash.clone().to_signed(),
             created_at: created_at.clone(),
             updated_at: created_at,
             md5: hash.clone().to_string(),
-            file_ext: value.metadata.format,
-            file_size: value.metadata.file_size,
-            image_width: value.metadata.width,
-            image_height: value.metadata.height,
+            file_ext: image.metadata.format.clone(),
+            file_size: image.metadata.file_size,
+            image_width: image.metadata.width,
+            image_height: image.metadata.height,
             duration: None,
             status: "active".to_string(),
             file_key: "bbD6k0WiU".to_string(),
             is_public: true,
             pixel_hash: hash.clone().to_string(),
-            variants: vec![variant],
+            variants: variants.clone().into(),
         }
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct Variant {
     #[serde(rename = "type")]
     pub variant_type: String,
@@ -126,36 +127,78 @@ pub struct Variant {
     pub file_ext: String,
 }
 
-impl Variant {
-    fn from_image(value: Image, url: &str) -> Self {
-        Self {
+fn generate_variants(config: &AppConfig, org: &Image) -> Variants {
+    Variants {
+        preview: Variant {
+            variant_type: "180x180".to_string(),
+            url: config
+                .cdn_base_url
+                .join(PathBuf::from("180x180"))
+                .join(org.path.clone())
+                .to_string_lossy()
+                .to_string(),
+            width: 180,
+            height: 180,
+            file_ext: org.metadata.format.clone(),
+        },
+        large: Variant {
+            variant_type: "sample".to_string(),
+            url: config
+                .cdn_base_url
+                .join(format!(
+                    "{}x{}",
+                    org.metadata.width / 2,
+                    org.metadata.height / 2
+                ))
+                .join(org.path.clone())
+                .to_string_lossy()
+                .to_string(),
+            width: org.metadata.width / 2,
+            height: org.metadata.height / 2,
+            file_ext: org.metadata.format.clone(),
+        },
+        orig: Variant {
             variant_type: "original".to_string(),
-            url: url.to_string(),
-            width: value.metadata.width,
-            height: value.metadata.height,
-            file_ext: value.metadata.format,
-        }
+            url: config
+                .cdn_base_url
+                .join(format!("{}x{}", org.metadata.width, org.metadata.height))
+                .join(org.path.clone())
+                .to_string_lossy()
+                .to_string(),
+            width: org.metadata.width,
+            height: org.metadata.height,
+            file_ext: org.metadata.format.clone(),
+        },
+    }
+}
+
+#[derive(Debug, Clone)]
+struct Variants {
+    orig: Variant,
+    large: Variant,
+    preview: Variant,
+}
+
+impl Into<Vec<Variant>> for Variants {
+    fn into(self) -> Vec<Variant> {
+        vec![self.preview, self.large, self.orig]
     }
 }
 
 impl ImageResponse {
     fn from_image(config: AppConfig, value: Image) -> Self {
-        let file_url = config
-            .cdn_base_url
-            .join(value.path.clone())
-            .to_string_lossy()
-            .to_string();
         let created_at = value
             .metadata
             .created_at
             .map(|e| e.to_rfc3339())
             .unwrap_or_default();
-        let asset = MediaAsset::from_image(value.clone(), &file_url);
+        let variants = generate_variants(&config, &value);
+        let asset = MediaAsset::from_image(&value, &variants);
 
         ImageResponse {
             id: value.hash.clone().to_signed(),
             tag_string: value.tags.join(" "),
-            file_url: Some(file_url.to_string()),
+            file_url: Some(variants.orig.url),
             created_at: created_at.clone(),
             updated_at: created_at.clone(),
             uploader_id: 0,
@@ -170,8 +213,8 @@ impl ImageResponse {
             pixiv_id: None,
             source: value.source.unwrap_or_default(),
             md5: Some(value.hash.to_string()),
-            large_file_url: Some(file_url.to_string()),
-            preview_file_url: Some(file_url.to_string()),
+            large_file_url: Some(variants.large.url),
+            preview_file_url: Some(variants.preview.url),
             file_ext: value.metadata.format,
             file_size: value.metadata.file_size as u32,
             image_width: value.metadata.width,
