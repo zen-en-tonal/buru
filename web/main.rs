@@ -1,4 +1,4 @@
-mod post;
+mod image;
 
 use axum::extract::{Path, State};
 use axum::http::{Response, StatusCode};
@@ -71,8 +71,8 @@ async fn main() {
     let addr = format!("0.0.0.0:{}", state.config.port);
 
     let app = Router::new()
-        .route("/posts", get(post::get_posts))
-        .route("/posts/{id}", get(post::get_post))
+        .route("/images", get(image::get_images).post(image::post_image))
+        .route("/images/{id}", get(image::get_image))
         .route("/files/{*hash}", get(serve_file))
         .with_state(state);
 

@@ -1,27 +1,29 @@
 use axum::{
     Json,
-    extract::{Path, Query, State},
+    extract::{Multipart, Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
 };
 use buru::{
-    app::{AppError, Image, find_image_by_hash, query_image},
+    app::{AppError, ArchiveImageCommand, Image, find_image_by_hash, query_image},
     query::{self, QueryKind},
     storage::Md5Hash,
 };
+use bytes::BytesMut;
+use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
 
 use crate::{AppConfig, AppState};
 
 #[derive(Deserialize)]
-pub struct PostQuery {
+pub struct ImageQuery {
     tags: Option<String>, // e.g. "cute cat"
     page: Option<u32>,
     limit: Option<u32>,
 }
 
 #[derive(Serialize, Debug)]
-pub struct PostResponse {
+pub struct ImageResponse {
     pub id: u128,
     pub created_at: String,
     pub updated_at: String,
@@ -67,14 +69,14 @@ pub struct PostResponse {
     pub bit_flags: u32,
 }
 
-impl PostResponse {
+impl ImageResponse {
     fn from_image(config: AppConfig, value: Image) -> Self {
         let file_url = config
             .cdn_base_url
             .join(value.path)
             .to_string_lossy()
             .to_string();
-        PostResponse {
+        ImageResponse {
             id: value.hash.clone().into(),
             tag_string: value.tags.join(" "),
             file_url: Some(file_url.to_string()),
@@ -122,10 +124,10 @@ impl PostResponse {
     }
 }
 
-pub async fn get_posts(
+pub async fn get_images(
     State(app): State<AppState>,
-    Query(params): Query<PostQuery>,
-) -> Result<Json<Vec<PostResponse>>, PostError> {
+    Query(params): Query<ImageQuery>,
+) -> Result<Json<Vec<ImageResponse>>, ImageError> {
     let tags = params
         .tags
         .unwrap_or_default()
@@ -148,61 +150,119 @@ pub async fn get_posts(
     Ok(Json(
         results
             .into_iter()
-            .map(|image| PostResponse::from_image(app.config.clone(), image))
+            .map(|image| ImageResponse::from_image(app.config.clone(), image))
             .collect(),
     ))
 }
 
-pub async fn get_post(
+pub async fn get_image(
     State(app): State<AppState>,
     Path(id): Path<u128>,
-) -> Result<Json<PostResponse>, PostError> {
+) -> Result<Json<ImageResponse>, ImageError> {
     let hash = Md5Hash::from(id);
 
     let image = find_image_by_hash(&app.db, &app.storage, hash).await?;
 
-    Ok(Json(PostResponse::from_image(app.config, image)))
+    Ok(Json(ImageResponse::from_image(app.config, image)))
 }
 
-pub struct PostError {
-    inner: AppError,
+pub async fn post_image(
+    State(state): State<AppState>,
+    mut multipart: Multipart,
+) -> Result<Json<ImageResponse>, ImageError> {
+    let mut bytes = None;
+    let mut tags = vec![];
+    let mut source = None;
+
+    while let Some(field) = multipart.next_field().await.unwrap_or(None) {
+        let name = field.name().unwrap_or_default().to_string();
+
+        match name.as_str() {
+            "file" => {
+                let mut data = BytesMut::new();
+                let mut stream = field.into_stream();
+                while let Some(chunk) = stream.try_next().await.unwrap_or(None) {
+                    data.extend_from_slice(&chunk);
+                }
+                bytes = Some(data.freeze().to_vec());
+            }
+            "tags" => {
+                let text = field.text().await.unwrap_or_default();
+                tags = text.split_whitespace().map(str::to_string).collect();
+            }
+            "source" => {
+                source = Some(field.text().await.unwrap_or_default());
+            }
+            _ => {} // ignore
+        }
+    }
+
+    let bytes = match bytes {
+        Some(b) => b,
+        None => return Err(ImageError::BadRequest("missing file".to_string())),
+    };
+
+    let cmd = ArchiveImageCommand::new(&bytes).with_tags(tags);
+
+    let cmd = if let Some(s) = source {
+        cmd.with_source(&s)
+    } else {
+        cmd
+    };
+
+    let img = cmd.execute(&state.storage, &state.db).await?;
+
+    Ok(Json(ImageResponse::from_image(state.config, img)))
 }
 
-impl From<AppError> for PostError {
+pub enum ImageError {
+    App(AppError),
+
+    BadRequest(String),
+}
+
+impl From<AppError> for ImageError {
     fn from(value: AppError) -> Self {
-        PostError { inner: value }
+        ImageError::App(value)
     }
 }
 
-impl IntoResponse for PostError {
+impl IntoResponse for ImageError {
     fn into_response(self) -> axum::response::Response {
         #[derive(Serialize)]
         struct ErrorResponse {
             message: String,
         }
 
-        let (status, message) = match self.inner {
-            AppError::Storage(storage_error) => match storage_error {
-                buru::storage::StorageError::HashCollision { existing_path } => (
-                    StatusCode::CONFLICT,
-                    existing_path.to_string_lossy().to_string(),
+        let (status, message) = match self {
+            ImageError::App(app_error) => match app_error {
+                AppError::Storage(storage_error) => match storage_error {
+                    buru::storage::StorageError::HashCollision { existing_path } => (
+                        StatusCode::CONFLICT,
+                        existing_path.to_string_lossy().to_string(),
+                    ),
+                    buru::storage::StorageError::UnsupportedFile { kind } => (
+                        StatusCode::BAD_REQUEST,
+                        kind.map(|k| k.mime_type().to_string())
+                            .unwrap_or("unknown".to_string()),
+                    ),
+                    buru::storage::StorageError::FileNotFound { hash } => {
+                        (StatusCode::NOT_FOUND, hash.to_string())
+                    }
+                    buru::storage::StorageError::Io(error) => {
+                        (StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
+                    }
+                    buru::storage::StorageError::Image(image_error) => {
+                        (StatusCode::INTERNAL_SERVER_ERROR, image_error.to_string())
+                    }
+                },
+                AppError::Database(database_error) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    database_error.to_string(),
                 ),
-                buru::storage::StorageError::UnsupportedFile { kind: _ } => unreachable!(),
-                buru::storage::StorageError::FileNotFound { hash } => {
-                    (StatusCode::NOT_FOUND, hash.to_string())
-                }
-                buru::storage::StorageError::Io(error) => {
-                    (StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
-                }
-                buru::storage::StorageError::Image(image_error) => {
-                    (StatusCode::INTERNAL_SERVER_ERROR, image_error.to_string())
-                }
+                AppError::StorageNotFound { hash } => (StatusCode::NOT_FOUND, hash.to_string()),
             },
-            AppError::Database(database_error) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                database_error.to_string(),
-            ),
-            AppError::StorageNotFound { hash } => (StatusCode::NOT_FOUND, hash.to_string()),
+            ImageError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
         };
 
         (status, Json(ErrorResponse { message })).into_response()
