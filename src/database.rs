@@ -5,7 +5,7 @@ use crate::{
     query::Query,
     storage::{ImageMetadata, Md5Hash},
 };
-use chrono::DateTime;
+use chrono::{DateTime, Utc};
 pub use sqlx::Pool;
 use sqlx::{Execute, FromRow, Row};
 use thiserror::Error;
@@ -115,16 +115,14 @@ impl Database {
         self.ensure_image(hash).await?;
 
         self.retry(|| async {
-            let mut query = sqlx::query(CurrentDialect::ensure_metadata_statement())
+            let query = sqlx::query(CurrentDialect::ensure_metadata_statement())
                 .bind(hash.clone().to_string())
                 .bind(metadata.width as i64)
                 .bind(metadata.height as i64)
                 .bind(&metadata.format)
                 .bind(&metadata.color_type)
-                .bind(metadata.file_size as i64);
-            if let Some(created_at) = metadata.created_at {
-                query = query.bind(created_at.to_rfc3339());
-            };
+                .bind(metadata.file_size as i64)
+                .bind(metadata.created_at.unwrap_or(Utc::now()).to_rfc3339());
             let sql = query.sql();
             query
                 .execute(&self.pool)
@@ -565,6 +563,29 @@ mod tests {
                 .await
                 .is_ok()
         );
+    }
+
+    #[tokio::test]
+    async fn test_ensure_metadata_without_created_at() {
+        let pool = get_pool().await;
+        let db = Database::with_migration(pool.clone()).await.unwrap();
+
+        let image = Md5Hash::try_from("620a139c9d3e63188299d0150c198bd5").unwrap();
+        let metadata = ImageMetadata {
+            width: 200,
+            height: 200,
+            format: "image/png".to_string(),
+            color_type: "rgba".to_string(),
+            file_size: 1337,
+            created_at: None,
+        };
+
+        assert!(
+            db.ensure_image_has_metadata(&image, &metadata)
+                .await
+                .is_ok()
+        );
+        assert!(db.get_metadata(&image).await.unwrap().is_some());
     }
 
     /// Full test of tag operations:
