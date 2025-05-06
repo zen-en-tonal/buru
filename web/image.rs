@@ -23,7 +23,7 @@ pub struct ImageQuery {
 
 #[derive(Serialize, Debug)]
 pub struct ImageResponse {
-    pub id: u64,
+    pub id: i64,
     pub created_at: String,
     pub updated_at: String,
     pub uploader_id: u32,
@@ -71,7 +71,7 @@ pub struct ImageResponse {
 
 #[derive(Debug, Serialize)]
 pub struct MediaAsset {
-    pub id: u64,
+    pub id: i64,
     pub created_at: String,
     pub updated_at: String,
     pub md5: String,
@@ -98,7 +98,7 @@ impl MediaAsset {
         let variant = Variant::from_image(value.clone(), url);
 
         Self {
-            id: value.hash.into(),
+            id: value.hash.to_signed(),
             created_at: created_at.clone(),
             updated_at: created_at,
             md5: hash.clone().to_string(),
@@ -153,7 +153,7 @@ impl ImageResponse {
         let asset = MediaAsset::from_image(value.clone(), &file_url);
 
         ImageResponse {
-            id: value.hash.clone().into(),
+            id: value.hash.clone().to_signed(),
             tag_string: value.tags.join(" "),
             file_url: Some(file_url.to_string()),
             created_at: created_at.clone(),
@@ -234,9 +234,9 @@ pub async fn get_images(
 
 pub async fn get_image(
     State(app): State<AppState>,
-    Path(id): Path<u64>,
+    Path(id): Path<i64>,
 ) -> Result<Json<ImageResponse>, ImageError> {
-    let hash = PixelHash::from(id);
+    let hash = PixelHash::from_signed(id);
 
     let image = find_image_by_hash(&app.db, &app.storage, hash).await?;
 

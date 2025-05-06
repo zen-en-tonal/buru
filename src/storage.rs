@@ -276,6 +276,17 @@ impl PixelHash {
     pub fn to_string(self) -> String {
         self.into()
     }
+
+    #[allow(overflowing_literals)]
+    pub fn to_signed(self) -> i64 {
+        let v: u64 = self.into();
+        (v as i64) ^ 0x8000_0000_0000_0000
+    }
+
+    #[allow(overflowing_literals)]
+    pub fn from_signed(v: i64) -> Self {
+        Self::from((v as u64) ^ 0x8000_0000_0000_0000)
+    }
 }
 
 impl Display for PixelHash {
@@ -369,7 +380,7 @@ fn compute_pixel_hash(img: &DynamicImage) -> PixelHash {
 #[cfg(test)]
 mod tests {
     use crate::storage::{PixelHash, PixelHashParseError, Storage, StorageError};
-    use std::{fs, path::PathBuf};
+    use std::{fs, i64, path::PathBuf};
     use tempfile::TempDir;
 
     #[test]
@@ -389,7 +400,23 @@ mod tests {
         assert_eq!(
             3644597259979188233_u64,
             u64::from(PixelHash::try_from("329435e5e66be809").unwrap())
-        )
+        );
+        assert_eq!(
+            i64::MIN,
+            PixelHash::try_from("0000000000000000").unwrap().to_signed()
+        );
+        assert_eq!(
+            i64::MAX,
+            PixelHash::try_from("ffffffffffffffff").unwrap().to_signed()
+        );
+        assert_eq!(
+            PixelHash::try_from("0000000000000000").unwrap(),
+            PixelHash::from_signed(i64::MIN)
+        );
+        assert_eq!(
+            PixelHash::try_from("ffffffffffffffff").unwrap(),
+            PixelHash::from_signed(i64::MAX),
+        );
     }
 
     #[test]
