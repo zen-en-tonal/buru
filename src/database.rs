@@ -3,7 +3,7 @@ use std::str::FromStr;
 use crate::{
     dialect::{CurrentDialect, Dialect},
     query::Query,
-    storage::{ImageMetadata, Md5Hash},
+    storage::{ImageMetadata, PixelHash},
 };
 use chrono::{DateTime, Utc};
 pub use sqlx::Pool;
@@ -87,7 +87,7 @@ impl Database {
     ///
     /// This will insert the image hash if it does not already exist.
     /// On failure (e.g., DB error), returns a `DatabaseError::QueryFailed`.
-    pub async fn ensure_image(&self, hash: &Md5Hash) -> Result<(), DatabaseError> {
+    pub async fn ensure_image(&self, hash: &PixelHash) -> Result<(), DatabaseError> {
         let stmt = CurrentDialect::ensure_image_statement();
 
         self.retry(|| async {
@@ -109,7 +109,7 @@ impl Database {
 
     pub async fn ensure_image_has_metadata(
         &self,
-        hash: &Md5Hash,
+        hash: &PixelHash,
         metadata: &ImageMetadata,
     ) -> Result<(), DatabaseError> {
         self.ensure_image(hash).await?;
@@ -174,7 +174,7 @@ impl Database {
     /// This method is idempotent and safe to call multiple times.
     pub async fn ensure_image_has_tag(
         &self,
-        hash: &Md5Hash,
+        hash: &PixelHash,
         tag: &str,
     ) -> Result<(), DatabaseError> {
         self.ensure_image(hash).await?;
@@ -204,7 +204,7 @@ impl Database {
 
     pub async fn ensure_image_has_source(
         &self,
-        hash: &Md5Hash,
+        hash: &PixelHash,
         source: &str,
     ) -> Result<(), DatabaseError> {
         self.ensure_image(hash).await?;
@@ -236,7 +236,7 @@ impl Database {
     ///
     /// Returns a list of image hashes that match the query.
     /// Query construction is handled by the `Query` module.
-    pub async fn find_by_query(&self, query: Query) -> Result<Vec<Md5Hash>, DatabaseError> {
+    pub async fn find_by_query(&self, query: Query) -> Result<Vec<PixelHash>, DatabaseError> {
         let (sql, params) = query.to_sql();
         let stmt = CurrentDialect::query_image_statement(sql);
 
@@ -258,7 +258,7 @@ impl Database {
             })
             .await?
             .into_iter()
-            .filter_map(|s| Md5Hash::try_from(s).ok())
+            .filter_map(|s| PixelHash::try_from(s).ok())
             .collect();
 
         Ok(hashes)
@@ -267,7 +267,7 @@ impl Database {
     /// Returns a list of tags associated with the given image hash.
     ///
     /// If no tags exist, returns an empty vector.
-    pub async fn get_tags(&self, hash: &Md5Hash) -> Result<Vec<String>, DatabaseError> {
+    pub async fn get_tags(&self, hash: &PixelHash) -> Result<Vec<String>, DatabaseError> {
         let stmt = CurrentDialect::query_tags_by_image_statement();
 
         let rows = self
@@ -289,7 +289,7 @@ impl Database {
 
     pub async fn get_metadata(
         &self,
-        hash: &Md5Hash,
+        hash: &PixelHash,
     ) -> Result<Option<ImageMetadata>, DatabaseError> {
         let stmt = CurrentDialect::query_metadata_statement();
 
@@ -310,7 +310,7 @@ impl Database {
         Ok(metadata)
     }
 
-    pub async fn get_source(&self, hash: &Md5Hash) -> Result<Option<String>, DatabaseError> {
+    pub async fn get_source(&self, hash: &PixelHash) -> Result<Option<String>, DatabaseError> {
         let soruce: Option<String> = self
             .retry(|| async {
                 let query = sqlx::query_scalar(CurrentDialect::query_source_statement())
@@ -334,7 +334,11 @@ impl Database {
     /// Ensures that a specific tag is removed from the image.
     ///
     /// This removes one (image_hash, tag) relation from `image_tags`.
-    pub async fn ensure_tag_removed(&self, hash: &Md5Hash, tag: &str) -> Result<(), DatabaseError> {
+    pub async fn ensure_tag_removed(
+        &self,
+        hash: &PixelHash,
+        tag: &str,
+    ) -> Result<(), DatabaseError> {
         let stmt = CurrentDialect::delete_image_tag_statement();
 
         self.retry(|| async {
@@ -364,7 +368,7 @@ impl Database {
     /// 2. Deletes the image row in `images`
     ///
     /// If any step fails, the entire transaction is rolled back.
-    pub async fn ensure_image_removed(&self, hash: &Md5Hash) -> Result<(), DatabaseError> {
+    pub async fn ensure_image_removed(&self, hash: &PixelHash) -> Result<(), DatabaseError> {
         let stmt_tags = CurrentDialect::delete_tags_by_image_statement();
         let stmt_image = CurrentDialect::delete_image_statement();
 
@@ -433,7 +437,7 @@ pub enum DatabaseError {
 pub enum DbOperation {
     /// INSERT INTO images
     InsertImage {
-        hash: Md5Hash,
+        hash: PixelHash,
     },
     /// INSERT INTO tags
     InsertTag {
@@ -441,25 +445,25 @@ pub enum DbOperation {
     },
     /// INSERT INTO image_tags
     InsertImageTag {
-        hash: Md5Hash,
+        hash: PixelHash,
         tag: String,
     },
     /// DELETE FROM image_tags WHERE ...
     DeleteImageTag {
-        hash: Md5Hash,
+        hash: PixelHash,
         tag: String,
     },
     /// DELETE FROM images WHERE ...
     DeleteImage {
-        hash: Md5Hash,
+        hash: PixelHash,
     },
     /// DELETE FROM image_tags WHERE image_hash = ...
     DeleteImageTags {
-        hash: Md5Hash,
+        hash: PixelHash,
     },
     /// SELECT tag_name FROM image_tags WHERE image_hash = ...
     QueryTags {
-        hash: Md5Hash,
+        hash: PixelHash,
     },
     /// General image query using dynamic conditions
     QueryImages,
@@ -467,7 +471,7 @@ pub enum DbOperation {
         metadata: ImageMetadata,
     },
     UpdateImageSource {
-        hash: Md5Hash,
+        hash: PixelHash,
         source: String,
     },
 }
@@ -496,7 +500,7 @@ mod tests {
     use crate::{
         database::{Database, Db, Pool},
         query::{Query, QueryExpr, QueryKind},
-        storage::{ImageMetadata, Md5Hash},
+        storage::{ImageMetadata, PixelHash},
     };
     use chrono::DateTime;
     use std::str::FromStr;
@@ -528,7 +532,7 @@ mod tests {
         let pool = get_pool().await;
         let db = Database::with_migration(pool.clone()).await.unwrap();
 
-        let image = Md5Hash::try_from("620a139c9d3e63188299d0150c198bd5").unwrap();
+        let image = PixelHash::try_from("329435e5e66be809").unwrap();
 
         assert!(db.ensure_image(&image).await.is_ok());
         assert!(db.ensure_image(&image).await.is_ok());
@@ -543,7 +547,7 @@ mod tests {
         let pool = get_pool().await;
         let db = Database::with_migration(pool.clone()).await.unwrap();
 
-        let image = Md5Hash::try_from("620a139c9d3e63188299d0150c198bd5").unwrap();
+        let image = PixelHash::try_from("329435e5e66be809").unwrap();
         let metadata = ImageMetadata {
             width: 200,
             height: 200,
@@ -570,7 +574,7 @@ mod tests {
         let pool = get_pool().await;
         let db = Database::with_migration(pool.clone()).await.unwrap();
 
-        let image = Md5Hash::try_from("620a139c9d3e63188299d0150c198bd5").unwrap();
+        let image = PixelHash::try_from("329435e5e66be809").unwrap();
         let metadata = ImageMetadata {
             width: 200,
             height: 200,
@@ -598,7 +602,7 @@ mod tests {
         let pool = get_pool().await;
         let db = Database::with_migration(pool.clone()).await.unwrap();
 
-        let image = Md5Hash::try_from("620a139c9d3e63188299d0150c198bd5").unwrap();
+        let image = PixelHash::try_from("329435e5e66be809").unwrap();
 
         // Add tags "cat" and "dog" (including duplicate insertions)
         assert!(db.ensure_image_has_tag(&image, "cat").await.is_ok());
@@ -624,9 +628,9 @@ mod tests {
         let pool = get_pool().await;
         let db = Database::with_migration(pool.clone()).await.unwrap();
 
-        let image_cat = Md5Hash::try_from("620a139c9d3e63188299d0150c198bd5").unwrap();
-        let image_dog = Md5Hash::try_from("020a139c9d3e63188299d0150c198bd5").unwrap();
-        let image_cat_and_dog = Md5Hash::try_from("120a139c9d3e63188299d0150c198bd5").unwrap();
+        let image_cat = PixelHash::try_from("329435e5e66be809").unwrap();
+        let image_dog = PixelHash::try_from("229435e5e66be809").unwrap();
+        let image_cat_and_dog = PixelHash::try_from("129435e5e66be809").unwrap();
 
         assert!(db.ensure_image_has_tag(&image_cat, "cat").await.is_ok());
         assert!(db.ensure_image_has_tag(&image_dog, "dog").await.is_ok());
@@ -653,7 +657,7 @@ mod tests {
         );
 
         assert_eq!(
-            vec![image_dog, image_cat_and_dog.clone()],
+            vec![image_cat_and_dog.clone(), image_dog.clone(),],
             db.find_by_query(query_dog).await.unwrap()
         );
 

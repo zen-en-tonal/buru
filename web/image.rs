@@ -1,3 +1,4 @@
+use crate::{AppConfig, AppState};
 use axum::{
     Json,
     extract::{Multipart, Path, Query, State},
@@ -7,22 +8,11 @@ use axum::{
 use buru::{
     app::{AppError, ArchiveImageCommand, Image, find_image_by_hash, query_image},
     query::{self, QueryKind},
-    storage::Md5Hash,
+    storage::PixelHash,
 };
 use bytes::BytesMut;
 use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
-use std::hash::Hasher;
-use twox_hash::XxHash64;
-
-use crate::{AppConfig, AppState};
-
-pub fn hash64(hash: &Md5Hash) -> u64 {
-    let bytes: [u8; 16] = hash.clone().into();
-    let mut hasher = XxHash64::with_seed(0);
-    hasher.write(&bytes);
-    hasher.finish()
-}
 
 #[derive(Deserialize)]
 pub struct ImageQuery {
@@ -108,7 +98,7 @@ impl MediaAsset {
         let variant = Variant::from_image(value.clone(), url);
 
         Self {
-            id: hash64(&value.hash).into(),
+            id: value.hash.into(),
             created_at: created_at.clone(),
             updated_at: created_at,
             md5: hash.clone().to_string(),
@@ -163,7 +153,7 @@ impl ImageResponse {
         let asset = MediaAsset::from_image(value.clone(), &file_url);
 
         ImageResponse {
-            id: hash64(&value.hash),
+            id: value.hash.clone().into(),
             tag_string: value.tags.join(" "),
             file_url: Some(file_url.to_string()),
             created_at: created_at.clone(),
@@ -244,9 +234,9 @@ pub async fn get_images(
 
 pub async fn get_image(
     State(app): State<AppState>,
-    Path(id): Path<u128>,
+    Path(id): Path<u64>,
 ) -> Result<Json<ImageResponse>, ImageError> {
-    let hash = Md5Hash::from(id);
+    let hash = PixelHash::from(id);
 
     let image = find_image_by_hash(&app.db, &app.storage, hash).await?;
 

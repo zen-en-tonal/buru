@@ -1,7 +1,7 @@
 use crate::{
     database::{Database, DatabaseError},
     query::Query,
-    storage::{ImageMetadata, Md5Hash, Storage, StorageError},
+    storage::{ImageMetadata, PixelHash, Storage, StorageError},
 };
 use std::{collections::HashMap, path::PathBuf};
 use tokio::task::JoinSet;
@@ -52,7 +52,7 @@ impl ArchiveImageCommand {
     }
 }
 
-pub async fn attach_tags(db: &Database, hash: &Md5Hash, tags: &[String]) -> Result<(), AppError> {
+pub async fn attach_tags(db: &Database, hash: &PixelHash, tags: &[String]) -> Result<(), AppError> {
     let mut set = JoinSet::new();
 
     for tag in tags {
@@ -73,14 +73,18 @@ pub async fn attach_tags(db: &Database, hash: &Md5Hash, tags: &[String]) -> Resu
     Ok(())
 }
 
-pub async fn attach_source(db: &Database, hash: &Md5Hash, src: &str) -> Result<(), AppError> {
+pub async fn attach_source(db: &Database, hash: &PixelHash, src: &str) -> Result<(), AppError> {
     db.ensure_image(hash).await?;
     db.ensure_image_has_source(hash, src).await?;
 
     Ok(())
 }
 
-pub async fn remove_image(storage: &Storage, db: &Database, hash: Md5Hash) -> Result<(), AppError> {
+pub async fn remove_image(
+    storage: &Storage,
+    db: &Database,
+    hash: PixelHash,
+) -> Result<(), AppError> {
     db.ensure_image_removed(&hash).await?;
     storage.ensure_deleted(&hash)?;
 
@@ -90,7 +94,7 @@ pub async fn remove_image(storage: &Storage, db: &Database, hash: Md5Hash) -> Re
 pub async fn find_image_by_hash(
     db: &Database,
     storage: &Storage,
-    hash: Md5Hash,
+    hash: PixelHash,
 ) -> Result<Image, AppError> {
     let path = storage
         .index_file(&hash)
@@ -130,7 +134,7 @@ pub async fn query_image(
         set.spawn(async move {
             // Load image data (from storage and metadata from DB) by hash
             let image = find_image_by_hash(&db, &storage, hash.clone()).await?;
-            Ok::<(Md5Hash, Image), AppError>((hash, image))
+            Ok::<(PixelHash, Image), AppError>((hash, image))
         });
     }
 
@@ -158,7 +162,7 @@ pub async fn query_image(
 #[derive(Debug, Clone, PartialEq)]
 pub struct Image {
     pub path: PathBuf,
-    pub hash: Md5Hash,
+    pub hash: PixelHash,
     pub metadata: ImageMetadata,
     pub tags: Vec<String>,
     pub source: Option<String>,
@@ -173,7 +177,7 @@ pub enum AppError {
     Database(#[from] DatabaseError),
 
     #[error("image not found: {hash}")]
-    StorageNotFound { hash: Md5Hash },
+    StorageNotFound { hash: PixelHash },
 }
 
 #[cfg(test)]
@@ -200,7 +204,7 @@ mod tests {
     async fn test_query() {
         let db = get_db().await;
         let storage = get_storage();
-        let file_bytes = include_bytes!("../testdata/620a139c9d3e63188299d0150c198bd5.png");
+        let file_bytes = include_bytes!("../testdata/44a5b6f94f4f6445.png");
 
         ArchiveImageCommand::new(file_bytes)
             .with_tags(["cat".to_string()])
@@ -220,7 +224,7 @@ mod tests {
     async fn test_remove_image() {
         let db = get_db().await;
         let storage = get_storage();
-        let file_bytes = include_bytes!("../testdata/620a139c9d3e63188299d0150c198bd5.png");
+        let file_bytes = include_bytes!("../testdata/44a5b6f94f4f6445.png");
 
         let image = ArchiveImageCommand::new(file_bytes)
             .with_tags(["cat".to_string()])

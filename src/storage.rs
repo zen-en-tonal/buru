@@ -6,12 +6,14 @@
 pub use chrono::{DateTime, Utc};
 use glob::glob;
 use image::{DynamicImage, GenericImageView, ImageFormat, ImageReader};
+use std::hash::Hasher;
 use std::{
     error::Error,
     fmt::Display,
     fs::{self},
     path::PathBuf,
 };
+use twox_hash::XxHash64;
 
 #[derive(Debug, Clone)]
 pub struct Storage {
@@ -52,11 +54,11 @@ impl Storage {
     /// # use buru::storage::Storage;
     /// # use tempfile::TempDir;
     /// let storage = Storage::new(TempDir::new().unwrap().path().to_path_buf());
-    /// let bytes = include_bytes!("../testdata/620a139c9d3e63188299d0150c198bd5.png");
+    /// let bytes = include_bytes!("../testdata/44a5b6f94f4f6445.png");
     /// let hash = storage.create_file(bytes).unwrap();
     /// println!("File stored with pixel hash: {:?}", hash);
     /// ```
-    pub fn create_file(&self, bytes: &[u8]) -> Result<Md5Hash, StorageError> {
+    pub fn create_file(&self, bytes: &[u8]) -> Result<PixelHash, StorageError> {
         // Since `DynamicImage` does not expose the format it was decoded from,
         // we independently guess the file format here based on the byte content.
         // If the format cannot be reliably guessed, the file is considered suspicious
@@ -105,7 +107,7 @@ impl Storage {
     /// # Returns
     /// * `Some(relative_path)` if the file exists.
     /// * `None` if no matching file is found.
-    pub fn index_file(&self, hash: &Md5Hash) -> Option<PathBuf> {
+    pub fn index_file(&self, hash: &PixelHash) -> Option<PathBuf> {
         self.find_entry(hash).map(|p| {
             self.derive_dir(hash)
                 .join(p.file_name().expect("Failed to get file name"))
@@ -123,14 +125,14 @@ impl Storage {
     /// # Returns
     /// * `Ok(())` if the file does not exist after the call.
     /// * `Err(StorageError::FilesystemError)` if an unexpected I/O error occurs.
-    pub fn ensure_deleted(&self, hash: &Md5Hash) -> Result<(), StorageError> {
+    pub fn ensure_deleted(&self, hash: &PixelHash) -> Result<(), StorageError> {
         if let Some(path) = self.find_entry(hash) {
             fs::remove_file(path)?;
         }
         Ok(())
     }
 
-    pub fn get_metadata(&self, hash: &Md5Hash) -> Result<ImageMetadata, StorageError> {
+    pub fn get_metadata(&self, hash: &PixelHash) -> Result<ImageMetadata, StorageError> {
         let file_path = self
             .find_entry(hash)
             .ok_or(StorageError::FileNotFound { hash: hash.clone() })?;
@@ -158,24 +160,24 @@ impl Storage {
 
     /// Derives a relative directory path from the hash (for indexing).
     /// Example: `01/23/`
-    fn derive_dir(&self, hash: &Md5Hash) -> PathBuf {
+    fn derive_dir(&self, hash: &PixelHash) -> PathBuf {
         PathBuf::from(format!("{:02x}/{:02x}/", hash.0[0], hash.0[1]))
     }
 
     /// Derives the absolute directory path on the filesystem.
-    fn derive_abs_dir(&self, hash: &Md5Hash) -> PathBuf {
+    fn derive_abs_dir(&self, hash: &PixelHash) -> PathBuf {
         self.root_path.join(self.derive_dir(hash))
     }
 
     /// Generates a filename based on the hash and extension.
-    fn derive_filename(&self, hash: &Md5Hash, ext: &str) -> PathBuf {
+    fn derive_filename(&self, hash: &PixelHash, ext: &str) -> PathBuf {
         let hash_str: String = hash.clone().into();
 
         PathBuf::from(format!("{}.{}", hash_str, ext))
     }
 
     /// Searches for a file matching the hash (with any extension).
-    fn find_entry(&self, hash: &Md5Hash) -> Option<PathBuf> {
+    fn find_entry(&self, hash: &PixelHash) -> Option<PathBuf> {
         let dir = self.derive_abs_dir(hash);
         let filename: String = hash.clone().into();
 
@@ -212,7 +214,7 @@ pub enum StorageError {
         kind: Option<infer::Type>,
     },
     FileNotFound {
-        hash: Md5Hash,
+        hash: PixelHash,
     },
     /// Filesystem IO error.
     Io(std::io::Error),
@@ -268,128 +270,125 @@ impl Error for StorageError {}
 
 /// Represents a 16-byte MD5 hash.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct Md5Hash([u8; 16]);
+pub struct PixelHash([u8; 8]);
 
-impl Md5Hash {
+impl PixelHash {
     pub fn to_string(self) -> String {
         self.into()
     }
 }
 
-impl Display for Md5Hash {
+impl Display for PixelHash {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.clone().to_string())
     }
 }
 
-impl TryFrom<&str> for Md5Hash {
-    type Error = Md5HashParseError;
+impl TryFrom<&str> for PixelHash {
+    type Error = PixelHashParseError;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         Self::try_from(value.to_string())
     }
 }
 
-impl TryFrom<String> for Md5Hash {
-    type Error = Md5HashParseError;
+impl TryFrom<String> for PixelHash {
+    type Error = PixelHashParseError;
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
-        if value.len() != 32 {
-            return Err(Md5HashParseError::InvalidLength);
+        if value.len() != 16 {
+            return Err(PixelHashParseError::InvalidLength);
         }
 
-        let mut bytes = [0u8; 16];
+        let mut bytes = [0u8; 8];
 
         for (i, byte) in bytes.iter_mut().enumerate() {
             let chunk = &value[i * 2..i * 2 + 2];
-            *byte = u8::from_str_radix(chunk, 16).map_err(|_| Md5HashParseError::InvalidHex)?;
+            *byte = u8::from_str_radix(chunk, 16).map_err(|_| PixelHashParseError::InvalidHex)?;
         }
 
-        Ok(Md5Hash(bytes))
+        Ok(PixelHash(bytes))
     }
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum Md5HashParseError {
+pub enum PixelHashParseError {
     InvalidLength,
     InvalidHex,
 }
 
-impl Display for Md5HashParseError {
+impl Display for PixelHashParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Md5HashParseError::InvalidLength => {
+            PixelHashParseError::InvalidLength => {
                 write!(f, "MD5 hash must be exactly 32 hexadecimal characters.")
             }
-            Md5HashParseError::InvalidHex => {
+            PixelHashParseError::InvalidHex => {
                 write!(f, "MD5 hash contains invalid hexadecimal characters.")
             }
         }
     }
 }
 
-impl Error for Md5HashParseError {}
+impl Error for PixelHashParseError {}
 
 /// Converts an Md5Hash into a hex string.
-impl From<Md5Hash> for String {
-    fn from(value: Md5Hash) -> Self {
+impl From<PixelHash> for String {
+    fn from(value: PixelHash) -> Self {
         value.0.iter().map(|b| format!("{:02x}", b)).collect()
     }
 }
 
-impl From<Md5Hash> for u128 {
-    fn from(value: Md5Hash) -> Self {
-        u128::from_be_bytes(value.0)
+impl From<PixelHash> for u64 {
+    fn from(value: PixelHash) -> Self {
+        u64::from_be_bytes(value.0)
     }
 }
 
-impl From<u128> for Md5Hash {
-    fn from(value: u128) -> Self {
-        Md5Hash(value.to_be_bytes())
+impl From<u64> for PixelHash {
+    fn from(value: u64) -> Self {
+        PixelHash(value.to_be_bytes())
     }
 }
 
-impl From<Md5Hash> for [u8; 16] {
-    fn from(value: Md5Hash) -> Self {
+impl From<PixelHash> for [u8; 8] {
+    fn from(value: PixelHash) -> Self {
         value.0
     }
 }
 
 /// Computes a pixel hash from a DynamicImage.
-fn compute_pixel_hash(img: &DynamicImage) -> Md5Hash {
+fn compute_pixel_hash(img: &DynamicImage) -> PixelHash {
     let pixels = img.to_rgba8().into_raw();
-    let digest = md5::compute(&pixels);
+    let mut hasher = XxHash64::with_seed(0);
+    hasher.write(&pixels);
 
-    Md5Hash(digest.0)
+    PixelHash::from(hasher.finish())
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::storage::{Md5Hash, Md5HashParseError, Storage, StorageError};
+    use crate::storage::{PixelHash, PixelHashParseError, Storage, StorageError};
     use std::{fs, path::PathBuf};
     use tempfile::TempDir;
 
     #[test]
     fn test_md5_parse() {
         assert_eq!(
-            Ok(Md5Hash([
-                50, 148, 53, 229, 230, 107, 232, 9, 166, 86, 175, 16, 95, 66, 64, 30
-            ])),
-            Md5Hash::try_from("329435e5e66be809a656af105f42401e".to_string())
+            Ok(PixelHash([50, 148, 53, 229, 230, 107, 232, 9,])),
+            PixelHash::try_from("329435e5e66be809".to_string())
         );
         assert_eq!(
-            Err(Md5HashParseError::InvalidLength),
-            Md5Hash::try_from("329435e5e66b".to_string())
+            Err(PixelHashParseError::InvalidLength),
+            PixelHash::try_from("329435e5e66b".to_string())
         );
         assert_eq!(
-            Err(Md5HashParseError::InvalidHex),
-            Md5Hash::try_from("Z29435e5e66be809a656af105f42401e".to_string())
+            Err(PixelHashParseError::InvalidHex),
+            PixelHash::try_from("Z29435e5e66be809".to_string())
         );
         assert_eq!(
-            67230952906579160527917458089239003166_u128,
-            Md5Hash::try_from("329435e5e66be809a656af105f42401e")
-                .unwrap()
-                .into()
+            3644597259979188233_u64,
+            u64::from(PixelHash::try_from("329435e5e66be809").unwrap())
         )
     }
 
@@ -398,17 +397,13 @@ mod tests {
         let storage = Storage::new("/root".into());
 
         assert_eq!(
-            PathBuf::from("ab/cd"),
-            storage.derive_dir(
-                &Md5Hash::try_from("abcd35e5e66be809a656af105f42401e".to_string()).unwrap()
-            )
+            PathBuf::from("32/94"),
+            storage.derive_dir(&PixelHash::try_from("329435e5e66be809".to_string()).unwrap())
         );
 
         assert_eq!(
-            PathBuf::from("/root/ab/cd"),
-            storage.derive_abs_dir(
-                &Md5Hash::try_from("abcd35e5e66be809a656af105f42401e".to_string()).unwrap()
-            )
+            PathBuf::from("/root/32/94"),
+            storage.derive_abs_dir(&PixelHash::try_from("329435e5e66be809".to_string()).unwrap())
         )
     }
 
@@ -417,10 +412,8 @@ mod tests {
         let tmp_dir = TempDir::new().unwrap();
         let storage = Storage::new(tmp_dir.path().to_path_buf());
 
-        let file_bytes = include_bytes!("../testdata/620a139c9d3e63188299d0150c198bd5.png");
-        let expect_path = tmp_dir
-            .path()
-            .join("62/0a/620a139c9d3e63188299d0150c198bd5.png");
+        let file_bytes = include_bytes!("../testdata/44a5b6f94f4f6445.png");
+        let expect_path = tmp_dir.path().join("44/a5/44a5b6f94f4f6445.png");
 
         storage.create_file(file_bytes).unwrap();
 
@@ -432,10 +425,8 @@ mod tests {
         let tmp_dir = TempDir::new().unwrap();
         let storage = Storage::new(tmp_dir.path().to_path_buf());
 
-        let file_bytes = include_bytes!("../testdata/620a139c9d3e63188299d0150c198bd5.png");
-        let expect_path = tmp_dir
-            .path()
-            .join("62/0a/620a139c9d3e63188299d0150c198bd5.png");
+        let file_bytes = include_bytes!("../testdata/44a5b6f94f4f6445.png");
+        let expect_path = tmp_dir.path().join("44/a5/44a5b6f94f4f6445.png");
 
         storage.create_file(file_bytes).unwrap();
 
@@ -452,23 +443,19 @@ mod tests {
         let tmp_dir = TempDir::new().unwrap();
         let storage = Storage::new(tmp_dir.path().to_path_buf());
 
-        let file_bytes = include_bytes!("../testdata/620a139c9d3e63188299d0150c198bd5.png");
-        let expect_path = PathBuf::from("62/0a/620a139c9d3e63188299d0150c198bd5.png");
+        let file_bytes = include_bytes!("../testdata/44a5b6f94f4f6445.png");
+        let expect_path = PathBuf::from("44/a5/44a5b6f94f4f6445.png");
 
         storage.create_file(file_bytes).unwrap();
 
         assert_eq!(
             Some(expect_path),
-            storage.index_file(
-                &Md5Hash::try_from("620a139c9d3e63188299d0150c198bd5".to_string()).unwrap()
-            )
+            storage.index_file(&PixelHash::try_from("44a5b6f94f4f6445".to_string()).unwrap())
         );
 
         assert_eq!(
             None,
-            storage.index_file(
-                &Md5Hash::try_from("020a139c9d3e63188299d0150c198bd5".to_string()).unwrap()
-            )
+            storage.index_file(&PixelHash::try_from("00a5b6f94f4f6445".to_string()).unwrap())
         );
     }
 
@@ -477,30 +464,24 @@ mod tests {
         let tmp_dir = TempDir::new().unwrap();
         let storage = Storage::new(tmp_dir.path().to_path_buf());
 
-        let file_bytes = include_bytes!("../testdata/620a139c9d3e63188299d0150c198bd5.png");
+        let file_bytes = include_bytes!("../testdata/44a5b6f94f4f6445.png");
         storage.create_file(file_bytes).unwrap();
 
         assert!(
             storage
-                .ensure_deleted(
-                    &Md5Hash::try_from("620a139c9d3e63188299d0150c198bd5".to_string()).unwrap()
-                )
+                .ensure_deleted(&PixelHash::try_from("44a5b6f94f4f6445".to_string()).unwrap())
                 .is_ok()
         );
 
         assert!(
             storage
-                .ensure_deleted(
-                    &Md5Hash::try_from("620a139c9d3e63188299d0150c198bd5".to_string()).unwrap()
-                )
+                .ensure_deleted(&PixelHash::try_from("44a5b6f94f4f6445".to_string()).unwrap())
                 .is_ok()
         );
 
         assert!(
             storage
-                .ensure_deleted(
-                    &Md5Hash::try_from("020a139c9d3e63188299d0150c198bd5".to_string()).unwrap()
-                )
+                .ensure_deleted(&PixelHash::try_from("00a5b6f94f4f6445".to_string()).unwrap())
                 .is_ok()
         );
     }
@@ -510,7 +491,7 @@ mod tests {
         let tmp_dir = TempDir::new().unwrap();
         let storage = Storage::new(tmp_dir.path().to_path_buf());
 
-        let file_bytes = include_bytes!("../testdata/620a139c9d3e63188299d0150c198bd5.png");
+        let file_bytes = include_bytes!("../testdata/44a5b6f94f4f6445.png");
         let hash = storage.create_file(file_bytes).unwrap();
 
         println!("{:?}", storage.get_metadata(&hash));
