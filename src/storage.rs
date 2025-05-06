@@ -349,6 +349,12 @@ impl From<u128> for Md5Hash {
     }
 }
 
+impl From<Md5Hash> for [u8; 16] {
+    fn from(value: Md5Hash) -> Self {
+        value.0
+    }
+}
+
 /// Computes a pixel hash from a DynamicImage.
 fn compute_pixel_hash(img: &DynamicImage) -> Md5Hash {
     let pixels = img.to_rgba8().into_raw();
