@@ -7,7 +7,7 @@ use axum::{
 };
 use buru::{
     app::{AppError, ArchiveImageCommand, Image, find_image_by_hash, query_image},
-    query::{self, QueryKind},
+    query::{self, ImageQueryExpr, ImageQueryKind},
     storage::PixelHash,
 };
 use bytes::BytesMut;
@@ -212,12 +212,12 @@ pub async fn get_images(
         .map(String::from)
         .collect::<Vec<_>>();
 
-    let query = query::Query::new(
+    let query = query::ImageQuery::new(
         tags.into_iter()
-            .map(query::QueryExpr::Tag)
-            .reduce(query::QueryExpr::and)
-            .map(QueryKind::Where)
-            .unwrap_or(QueryKind::All),
+            .map(ImageQueryExpr::Tag)
+            .reduce(ImageQueryExpr::and)
+            .map(ImageQueryKind::Where)
+            .unwrap_or(ImageQueryKind::All),
     )
     .with_limit(params.limit.unwrap_or(20))
     .with_offset((params.page.unwrap_or(1) - 1) * params.limit.unwrap_or(20));

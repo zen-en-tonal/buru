@@ -1,4 +1,4 @@
-use crate::query::QueryExpr;
+use crate::query::ImageQueryExpr;
 use chrono::DateTime;
 use nom::{
     AsChar, IResult, Parser,
@@ -18,7 +18,7 @@ use std::str::FromStr;
 // <primary>  ::= <date_expr>
 //              | "(" <query> ")"
 //              | <tag>
-pub fn parse_query(input: &str) -> Result<QueryExpr, ParseErrorDetail> {
+pub fn parse_query(input: &str) -> Result<ImageQueryExpr, ParseErrorDetail> {
     let (rest, query) = query_expr(input).map_err(|e| match e {
         nom::Err::Error(e) | nom::Err::Failure(e) => e,
         nom::Err::Incomplete(_) => ParseErrorDetail {
@@ -37,8 +37,8 @@ pub fn parse_query(input: &str) -> Result<QueryExpr, ParseErrorDetail> {
     Ok(query)
 }
 
-fn query_expr(input: &str) -> IResult<&str, QueryExpr, ParseErrorDetail> {
-    fn or_expr(input: &str) -> IResult<&str, QueryExpr, ParseErrorDetail> {
+fn query_expr(input: &str) -> IResult<&str, ImageQueryExpr, ParseErrorDetail> {
+    fn or_expr(input: &str) -> IResult<&str, ImageQueryExpr, ParseErrorDetail> {
         let (input, init) = and_expr(input)?;
         many0(preceded(ws(t("OR")), and_expr))
             .parse(input)
@@ -48,7 +48,7 @@ fn query_expr(input: &str) -> IResult<&str, QueryExpr, ParseErrorDetail> {
             })
     }
 
-    fn and_expr(input: &str) -> IResult<&str, QueryExpr, ParseErrorDetail> {
+    fn and_expr(input: &str) -> IResult<&str, ImageQueryExpr, ParseErrorDetail> {
         let (input, init) = not_expr(input)?;
         many0(preceded(ws(t("AND")), not_expr))
             .parse(input)
@@ -58,25 +58,25 @@ fn query_expr(input: &str) -> IResult<&str, QueryExpr, ParseErrorDetail> {
             })
     }
 
-    fn not_expr(input: &str) -> IResult<&str, QueryExpr, ParseErrorDetail> {
+    fn not_expr(input: &str) -> IResult<&str, ImageQueryExpr, ParseErrorDetail> {
         let (input, not_opt) = opt(preceded(ws(t("NOT")), primary)).parse(input)?;
         match not_opt {
-            Some(expr) => Ok((input, QueryExpr::not(expr))),
+            Some(expr) => Ok((input, ImageQueryExpr::not(expr))),
             None => primary(input),
         }
     }
 
-    fn primary(input: &str) -> IResult<&str, QueryExpr, ParseErrorDetail> {
+    fn primary(input: &str) -> IResult<&str, ImageQueryExpr, ParseErrorDetail> {
         alt((date_expr, paren_expr, tag)).parse(input)
     }
 
-    fn tag(input: &str) -> IResult<&str, QueryExpr, ParseErrorDetail> {
+    fn tag(input: &str) -> IResult<&str, ImageQueryExpr, ParseErrorDetail> {
         ws(take_while1(|c: char| c.is_alphanumeric() || c == '_'))
             .parse(input)
-            .map(|(i, tag_str)| (i, QueryExpr::Tag(tag_str.to_string())))
+            .map(|(i, tag_str)| (i, ImageQueryExpr::Tag(tag_str.to_string())))
     }
 
-    fn date_expr(input: &str) -> IResult<&str, QueryExpr, ParseErrorDetail> {
+    fn date_expr(input: &str) -> IResult<&str, ImageQueryExpr, ParseErrorDetail> {
         let is_datetime_char = |c: char| {
             AsChar::is_dec_digit(c) || c == '-' || c == ':' || c == '.' || c == 'T' || c == 'Z'
         };
@@ -91,13 +91,13 @@ fn query_expr(input: &str) -> IResult<&str, QueryExpr, ParseErrorDetail> {
         let dt = DateTime::from_str(date_str).expect("Invalid date format");
 
         match op {
-            ">=" => Ok((input, QueryExpr::DateSince(dt))),
-            "<=" => Ok((input, QueryExpr::DateUntil(dt))),
+            ">=" => Ok((input, ImageQueryExpr::DateSince(dt))),
+            "<=" => Ok((input, ImageQueryExpr::DateUntil(dt))),
             _ => unreachable!(),
         }
     }
 
-    fn paren_expr(input: &str) -> IResult<&str, QueryExpr, ParseErrorDetail> {
+    fn paren_expr(input: &str) -> IResult<&str, ImageQueryExpr, ParseErrorDetail> {
         delimited(ws(char('(')), query_expr, ws(char(')'))).parse(input)
     }
 
@@ -141,7 +141,7 @@ impl nom::error::ParseError<&str> for ParseErrorDetail {
 
 #[cfg(test)]
 mod tests {
-    use crate::{parser::parse_query, query::QueryExpr};
+    use crate::{parser::parse_query, query::ImageQueryExpr};
     use chrono::DateTime;
     use std::str::FromStr;
 
@@ -150,9 +150,11 @@ mod tests {
         let input = "cat AND (cute OR NOT dog) AND date >= 2025-05-02T01:18:49.678809123Z";
 
         assert_eq!(
-            QueryExpr::tag("cat")
-                .and(QueryExpr::tag("cute").or(QueryExpr::not(QueryExpr::tag("dog"))))
-                .and(QueryExpr::date_since(
+            ImageQueryExpr::tag("cat")
+                .and(
+                    ImageQueryExpr::tag("cute").or(ImageQueryExpr::not(ImageQueryExpr::tag("dog")))
+                )
+                .and(ImageQueryExpr::date_since(
                     DateTime::from_str("2025-05-02T01:18:49.678809123Z").unwrap()
                 )),
             parse_query(input).unwrap()

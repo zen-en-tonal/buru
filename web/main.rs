@@ -1,4 +1,5 @@
 mod image;
+mod tag;
 
 use axum::extract::{Path, State};
 use axum::http::{Response, StatusCode};
@@ -73,6 +74,7 @@ async fn main() {
     let app = Router::new()
         .route("/images", get(image::get_images).post(image::post_image))
         .route("/images/{id}", get(image::get_image))
+        .route("/tags", get(tag::get_tags))
         .route("/files/{*hash}", get(serve_file))
         .with_state(state);
 

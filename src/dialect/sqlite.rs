@@ -36,6 +36,10 @@ impl Dialect for SqliteDialect {
         format!("SELECT hash FROM image_with_metadata {}", condition)
     }
 
+    fn query_tag_statement(condition: String) -> String {
+        format!("SELECT name FROM tags {}", condition)
+    }
+
     fn query_tags_by_image_statement() -> &'static str {
         "SELECT tag_name FROM image_tags WHERE image_hash = ?"
     }

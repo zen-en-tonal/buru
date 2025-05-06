@@ -1,6 +1,6 @@
 use crate::{
     database::{Database, DatabaseError},
-    query::Query,
+    query::{ImageQuery, TagQuery},
     storage::{ImageMetadata, PixelHash, Storage, StorageError},
 };
 use std::{collections::HashMap, path::PathBuf};
@@ -121,10 +121,10 @@ pub async fn find_image_by_hash(
 pub async fn query_image(
     db: &Database,
     storage: &Storage,
-    query: Query,
+    query: ImageQuery,
 ) -> Result<Vec<Image>, AppError> {
     // Step 1: Execute the query to get matching image hashes, in order
-    let hashes = db.find_by_query(query).await?;
+    let hashes = db.query_image(query).await?;
 
     // Step 2: Spawn parallel tasks to retrieve images by hash
     let mut set = JoinSet::new();
@@ -159,6 +159,10 @@ pub async fn query_image(
     Ok(images)
 }
 
+pub async fn query_tags(db: &Database, query: TagQuery) -> Result<Vec<String>, AppError> {
+    db.query_tags(query).await.map_err(AppError::from)
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Image {
     pub path: PathBuf,
@@ -185,7 +189,7 @@ mod tests {
     use crate::{
         app::{ArchiveImageCommand, query_image, remove_image},
         database::{Database, Pool},
-        query::{Query, QueryExpr, QueryKind},
+        query::{ImageQuery, ImageQueryExpr, ImageQueryKind},
         storage::Storage,
     };
     use tempfile::TempDir;
@@ -213,7 +217,7 @@ mod tests {
             .await
             .unwrap();
 
-        let query = Query::new(QueryKind::Where(QueryExpr::tag("cat")));
+        let query = ImageQuery::new(ImageQueryKind::Where(ImageQueryExpr::tag("cat")));
 
         let res = query_image(&db, &storage, query).await.unwrap();
 

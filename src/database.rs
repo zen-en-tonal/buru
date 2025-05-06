@@ -1,13 +1,12 @@
-use std::str::FromStr;
-
 use crate::{
     dialect::{CurrentDialect, Dialect},
-    query::Query,
+    query::{ImageQuery, TagQuery},
     storage::{ImageMetadata, PixelHash},
 };
 use chrono::{DateTime, Utc};
 pub use sqlx::Pool;
 use sqlx::{Execute, FromRow, Row};
+use std::str::FromStr;
 use thiserror::Error;
 
 #[cfg(feature = "sqlite")]
@@ -236,7 +235,7 @@ impl Database {
     ///
     /// Returns a list of image hashes that match the query.
     /// Query construction is handled by the `Query` module.
-    pub async fn find_by_query(&self, query: Query) -> Result<Vec<PixelHash>, DatabaseError> {
+    pub async fn query_image(&self, query: ImageQuery) -> Result<Vec<PixelHash>, DatabaseError> {
         let (sql, params) = query.to_sql();
         let stmt = CurrentDialect::query_image_statement(sql);
 
@@ -259,6 +258,33 @@ impl Database {
             .await?
             .into_iter()
             .filter_map(|s| PixelHash::try_from(s).ok())
+            .collect();
+
+        Ok(hashes)
+    }
+
+    pub async fn query_tags(&self, query: TagQuery) -> Result<Vec<String>, DatabaseError> {
+        let (sql, params) = query.to_sql();
+        let stmt = CurrentDialect::query_tag_statement(sql);
+
+        let hashes = self
+            .retry(|| async {
+                let mut q = sqlx::query_scalar::<_, String>(&stmt);
+
+                for param in &params {
+                    q = q.bind(param);
+                }
+
+                q.fetch_all(&self.pool)
+                    .await
+                    .map_err(|e| DatabaseError::QueryFailed {
+                        operation: DbOperation::QueryTags,
+                        sql: stmt.to_string(),
+                        source: e,
+                    })
+            })
+            .await?
+            .into_iter()
             .collect();
 
         Ok(hashes)
@@ -462,7 +488,7 @@ pub enum DbOperation {
         hash: PixelHash,
     },
     /// SELECT tag_name FROM image_tags WHERE image_hash = ...
-    QueryTags {
+    QueryImageTags {
         hash: PixelHash,
     },
     /// General image query using dynamic conditions
@@ -474,6 +500,7 @@ pub enum DbOperation {
         hash: PixelHash,
         source: String,
     },
+    QueryTags,
 }
 
 impl DatabaseError {
@@ -499,7 +526,7 @@ impl DatabaseError {
 mod tests {
     use crate::{
         database::{Database, Db, Pool},
-        query::{Query, QueryExpr, QueryKind},
+        query::{ImageQuery, ImageQueryExpr, ImageQueryKind, TagQuery, TagQueryExpr, TagQueryKind},
         storage::{ImageMetadata, PixelHash},
     };
     use chrono::DateTime;
@@ -645,25 +672,58 @@ mod tests {
                 .is_ok()
         );
 
-        let query_cat = Query::new(QueryKind::Where(QueryExpr::tag("cat")));
-        let query_dog = Query::new(QueryKind::Where(QueryExpr::tag("dog")));
-        let query_cat_and_dog = Query::new(QueryKind::Where(
-            QueryExpr::tag("cat").and(QueryExpr::tag("dog")),
+        let query_cat = ImageQuery::new(ImageQueryKind::Where(ImageQueryExpr::tag("cat")));
+        let query_dog = ImageQuery::new(ImageQueryKind::Where(ImageQueryExpr::tag("dog")));
+        let query_cat_and_dog = ImageQuery::new(ImageQueryKind::Where(
+            ImageQueryExpr::tag("cat").and(ImageQueryExpr::tag("dog")),
         ));
 
         assert_eq!(
             vec![image_cat_and_dog.clone(), image_cat.clone()],
-            db.find_by_query(query_cat).await.unwrap()
+            db.query_image(query_cat).await.unwrap()
         );
 
         assert_eq!(
             vec![image_cat_and_dog.clone(), image_dog.clone(),],
-            db.find_by_query(query_dog).await.unwrap()
+            db.query_image(query_dog).await.unwrap()
         );
 
         assert_eq!(
             vec![image_cat_and_dog],
-            db.find_by_query(query_cat_and_dog).await.unwrap()
+            db.query_image(query_cat_and_dog).await.unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_query_tags() {
+        let pool = get_pool().await;
+        let db = Database::with_migration(pool.clone()).await.unwrap();
+
+        assert!(db.ensure_tag("cat").await.is_ok());
+        assert!(db.ensure_tag("dog").await.is_ok());
+
+        let query_cat = TagQuery::new(TagQueryKind::Where(TagQueryExpr::Exact("cat".to_string())));
+        let query_dog = TagQuery::new(TagQueryKind::Where(TagQueryExpr::Exact("dog".to_string())));
+        let query_all = TagQuery::new(TagQueryKind::All);
+        let query_contains_ca = TagQuery::new(TagQueryKind::Where(TagQueryExpr::Contains(
+            "ca".to_string(),
+        )));
+
+        assert_eq!(
+            vec!["cat".to_string(), "dog".to_string()],
+            db.query_tags(query_all).await.unwrap()
+        );
+        assert_eq!(
+            vec!["cat".to_string()],
+            db.query_tags(query_cat).await.unwrap()
+        );
+        assert_eq!(
+            vec!["dog".to_string()],
+            db.query_tags(query_dog).await.unwrap()
+        );
+        assert_eq!(
+            vec!["cat".to_string()],
+            db.query_tags(query_contains_ca).await.unwrap()
         );
     }
 }
