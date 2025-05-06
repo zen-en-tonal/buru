@@ -39,7 +39,7 @@ impl FromRow<'_, CurrentRow> for ImageMetadata {
             format,
             color_type,
             file_size: file_size as u64,
-            created_at,
+            created_at: Some(created_at),
         })
     }
 }
@@ -115,14 +115,16 @@ impl Database {
         self.ensure_image(hash).await?;
 
         self.retry(|| async {
-            let query = sqlx::query(CurrentDialect::ensure_metadata_statement())
+            let mut query = sqlx::query(CurrentDialect::ensure_metadata_statement())
                 .bind(hash.clone().to_string())
                 .bind(metadata.width as i64)
                 .bind(metadata.height as i64)
                 .bind(&metadata.format)
                 .bind(&metadata.color_type)
-                .bind(metadata.file_size as i64)
-                .bind(metadata.created_at.to_rfc3339());
+                .bind(metadata.file_size as i64);
+            if let Some(created_at) = metadata.created_at {
+                query = query.bind(created_at.to_rfc3339());
+            };
             let sql = query.sql();
             query
                 .execute(&self.pool)
@@ -550,7 +552,7 @@ mod tests {
             format: "image/png".to_string(),
             color_type: "rgba".to_string(),
             file_size: 1337,
-            created_at: DateTime::from_str("2025-05-02T01:18:49.678809123Z").unwrap(),
+            created_at: Some(DateTime::from_str("2025-05-02T01:18:49.678809123Z").unwrap()),
         };
 
         assert!(

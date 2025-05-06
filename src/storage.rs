@@ -143,10 +143,7 @@ impl Storage {
         let color_type = format!("{:?}", img.color());
 
         let metadata = std::fs::metadata(&file_path)?;
-        let created_at = metadata
-            .modified()
-            .expect("failed to get created_at: filesystem does not support")
-            .into();
+        let created_at = metadata.created().map(DateTime::from).ok();
         let file_size = metadata.len();
 
         Ok(ImageMetadata {
@@ -200,7 +197,7 @@ pub struct ImageMetadata {
     pub file_size: u64,
 
     /// Filesystem-based creation timestamp
-    pub created_at: DateTime<Utc>,
+    pub created_at: Option<DateTime<Utc>>,
 }
 
 /// Errors that can occur during storage operations.

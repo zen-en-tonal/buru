@@ -87,7 +87,7 @@ impl Dialect for SqliteDialect {
                 format TEXT NOT NULL,
                 color_type TEXT NOT NULL,
                 file_size INTEGER NOT NULL,
-                created_at TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (image_hash),
                 FOREIGN KEY (image_hash) REFERENCES images(hash) ON DELETE CASCADE
             );"#,

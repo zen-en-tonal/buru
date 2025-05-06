@@ -76,12 +76,17 @@ impl ImageResponse {
             .join(value.path)
             .to_string_lossy()
             .to_string();
+        let created_at = value
+            .metadata
+            .created_at
+            .map(|e| e.to_rfc3339())
+            .unwrap_or_default();
         ImageResponse {
             id: value.hash.clone().into(),
             tag_string: value.tags.join(" "),
             file_url: Some(file_url.to_string()),
-            created_at: value.metadata.created_at.to_rfc3339(),
-            updated_at: value.metadata.created_at.to_rfc3339(),
+            created_at: created_at.clone(),
+            updated_at: created_at.clone(),
             uploader_id: 0,
             approver_id: None,
             tag_string_general: value.tags.join(" "),
