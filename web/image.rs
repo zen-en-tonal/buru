@@ -67,13 +67,83 @@ pub struct ImageResponse {
     pub is_flagged: bool,
     pub is_pending: bool,
     pub bit_flags: u32,
+    pub media_asset: MediaAsset,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MediaAsset {
+    pub id: u128,
+    pub created_at: String,
+    pub updated_at: String,
+    pub md5: String,
+    pub file_ext: String,
+    pub file_size: u64,
+    pub image_width: u32,
+    pub image_height: u32,
+    pub duration: Option<f64>,
+    pub status: String,
+    pub file_key: String,
+    pub is_public: bool,
+    pub pixel_hash: String,
+    pub variants: Vec<Variant>,
+}
+
+impl MediaAsset {
+    fn from_image(value: Image, url: &str) -> Self {
+        let created_at = value
+            .metadata
+            .created_at
+            .map(|e| e.to_rfc3339())
+            .unwrap_or_default();
+        let hash = value.clone().hash;
+        let variant = Variant::from_image(value.clone(), url);
+
+        Self {
+            id: hash.clone().into(),
+            created_at: created_at.clone(),
+            updated_at: created_at,
+            md5: hash.clone().to_string(),
+            file_ext: value.metadata.format,
+            file_size: value.metadata.file_size,
+            image_width: value.metadata.width,
+            image_height: value.metadata.height,
+            duration: None,
+            status: "active".to_string(),
+            file_key: "bbD6k0WiU".to_string(),
+            is_public: true,
+            pixel_hash: hash.clone().to_string(),
+            variants: vec![variant],
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct Variant {
+    #[serde(rename = "type")]
+    pub variant_type: String,
+    pub url: String,
+    pub width: u32,
+    pub height: u32,
+    pub file_ext: String,
+}
+
+impl Variant {
+    fn from_image(value: Image, url: &str) -> Self {
+        Self {
+            variant_type: "original".to_string(),
+            url: url.to_string(),
+            width: value.metadata.width,
+            height: value.metadata.height,
+            file_ext: value.metadata.format,
+        }
+    }
 }
 
 impl ImageResponse {
     fn from_image(config: AppConfig, value: Image) -> Self {
         let file_url = config
             .cdn_base_url
-            .join(value.path)
+            .join(value.path.clone())
             .to_string_lossy()
             .to_string();
         let created_at = value
@@ -81,6 +151,8 @@ impl ImageResponse {
             .created_at
             .map(|e| e.to_rfc3339())
             .unwrap_or_default();
+        let asset = MediaAsset::from_image(value.clone(), &file_url);
+
         ImageResponse {
             id: value.hash.clone().into(),
             tag_string: value.tags.join(" "),
@@ -100,7 +172,7 @@ impl ImageResponse {
             source: value.source.unwrap_or_default(),
             md5: Some(value.hash.to_string()),
             large_file_url: Some(file_url.to_string()),
-            preview_file_url: None,
+            preview_file_url: Some(file_url.to_string()),
             file_ext: value.metadata.format,
             file_size: value.metadata.file_size as u32,
             image_width: value.metadata.width,
@@ -125,6 +197,7 @@ impl ImageResponse {
             is_flagged: false,
             is_pending: false,
             bit_flags: 0,
+            media_asset: asset,
         }
     }
 }
