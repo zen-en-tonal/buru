@@ -161,7 +161,7 @@ fn generate_variants(config: &AppConfig, org: &Image) -> Variants {
             variant_type: "original".to_string(),
             url: config
                 .cdn_base_url
-                .join(format!("{}x{}", org.metadata.width, org.metadata.height))
+                .join("original")
                 .join(org.path.clone())
                 .to_string_lossy()
                 .to_string(),
