@@ -322,15 +322,13 @@ pub async fn post_image(
         None => return Err(ImageError::BadRequest("missing file".to_string())),
     };
 
-    let cmd = ArchiveImageCommand::new(&bytes).with_tags(tags);
-
-    let cmd = if let Some(s) = source {
-        cmd.with_source(&s)
-    } else {
-        cmd
-    };
-
-    let img = cmd.execute(&state.storage, &state.db).await?;
+    let img = ArchiveImageCommand {
+        bytes,
+        tags,
+        source,
+    }
+    .execute(&state.storage, &state.db)
+    .await?;
 
     Ok(Json(ImageResponse::from_image(state.config, img)))
 }

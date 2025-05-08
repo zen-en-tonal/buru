@@ -210,8 +210,8 @@ impl Database {
 
         self.retry(|| async {
             let query = sqlx::query(CurrentDialect::update_source_statement())
-                .bind(hash.clone().to_string())
-                .bind(source);
+                .bind(source)
+                .bind(hash.clone().to_string());
             let sql = query.sql();
 
             query
@@ -563,6 +563,20 @@ mod tests {
 
         assert!(db.ensure_image(&image).await.is_ok());
         assert!(db.ensure_image(&image).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_ensure_source() {
+        let pool = get_pool().await;
+        let db = Database::with_migration(pool.clone()).await.unwrap();
+
+        let image = PixelHash::try_from("329435e5e66be809").unwrap();
+
+        assert!(db.ensure_image_has_source(&image, "src").await.is_ok());
+        assert_eq!(
+            Some("src".to_string()),
+            db.get_source(&image).await.unwrap()
+        );
     }
 
     /// Ensures that inserting the same image multiple times does not result in error.
