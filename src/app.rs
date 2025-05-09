@@ -61,11 +61,11 @@ impl ArchiveImageCommand {
         db.ensure_image_has_metadata(&hash, &metadata).await?;
 
         if !self.tags.is_empty() {
-            attach_tags(db, &hash, &self.tags).await?;
+            attach_tags(db, storage, &hash, &self.tags).await?;
         }
 
         if let Some(src) = self.source {
-            attach_source(db, &hash, &src).await?;
+            attach_source(db, storage, &hash, &src).await?;
         }
 
         find_image_by_hash(db, storage, &hash).await
@@ -76,7 +76,16 @@ impl ArchiveImageCommand {
 ///
 /// Computes the diff between current DB tags and desired tags,
 /// then adds/removes tags accordingly using parallel execution.
-pub async fn attach_tags(db: &Database, hash: &PixelHash, tags: &[String]) -> Result<(), AppError> {
+pub async fn attach_tags(
+    db: &Database,
+    storage: &Storage,
+    hash: &PixelHash,
+    tags: &[String],
+) -> Result<(), AppError> {
+    if storage.index_file(hash).is_none() {
+        return Err(AppError::StorageNotFound { hash: hash.clone() });
+    }
+
     let mut set = JoinSet::new();
 
     let desired: HashSet<String> = tags.to_vec().into_iter().collect();
@@ -111,7 +120,16 @@ pub async fn attach_tags(db: &Database, hash: &PixelHash, tags: &[String]) -> Re
 }
 
 /// Updates the image source field in the database.
-pub async fn attach_source(db: &Database, hash: &PixelHash, src: &str) -> Result<(), AppError> {
+pub async fn attach_source(
+    db: &Database,
+    storage: &Storage,
+    hash: &PixelHash,
+    src: &str,
+) -> Result<(), AppError> {
+    if storage.index_file(hash).is_none() {
+        return Err(AppError::StorageNotFound { hash: hash.clone() });
+    }
+
     db.ensure_image(hash).await?;
     db.ensure_image_has_source(hash, src).await?;
 
@@ -303,7 +321,9 @@ mod tests {
             .unwrap();
         let desired = &["cat".to_string(), "cute".to_string()];
 
-        attach_tags(&db, &image.hash, desired).await.unwrap();
+        attach_tags(&db, &storage, &image.hash, desired)
+            .await
+            .unwrap();
 
         assert_eq!(
             desired.to_vec(),

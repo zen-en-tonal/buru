@@ -8,7 +8,7 @@ use axum::{
     response::IntoResponse,
 };
 use buru::{
-    app::{AppError, ArchiveImageCommand, Image, find_image_by_hash, query_image},
+    app::{AppError, ArchiveImageCommand, Image, attach_tags, find_image_by_hash, query_image},
     query::{self, ImageQueryExpr, ImageQueryKind},
     storage::PixelHash,
 };
@@ -331,6 +331,27 @@ pub async fn post_image(
     .await?;
 
     Ok(Json(ImageResponse::from_image(state.config, img)))
+}
+
+pub async fn put_tags(
+    State(app): State<AppState>,
+    Path(id): Path<i64>,
+    Query(params): Query<ImageQuery>,
+) -> Result<Json<ImageResponse>, ImageError> {
+    let tags = params
+        .tags
+        .unwrap_or_default()
+        .split_whitespace()
+        .map(String::from)
+        .collect::<Vec<_>>();
+    let hash = PixelHash::from_signed(id);
+
+    attach_tags(&app.db, &app.storage, &hash, &tags).await?;
+
+    Ok(Json(ImageResponse::from_image(
+        app.config,
+        find_image_by_hash(&app.db, &app.storage, &hash).await?,
+    )))
 }
 
 pub enum ImageError {
