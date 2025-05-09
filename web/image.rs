@@ -281,7 +281,7 @@ pub async fn get_image(
 ) -> Result<Json<ImageResponse>, ImageError> {
     let hash = PixelHash::from_signed(id);
 
-    let image = find_image_by_hash(&app.db, &app.storage, hash).await?;
+    let image = find_image_by_hash(&app.db, &app.storage, &hash).await?;
 
     Ok(Json(ImageResponse::from_image(app.config, image)))
 }
