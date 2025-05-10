@@ -72,6 +72,55 @@ pub async fn get_tags(
     Ok(Json(results.into_iter().map(TagResponse::from).collect()))
 }
 
+#[derive(Deserialize)]
+pub struct SuggestTagQuery {
+    #[serde(rename = "search[query]")]
+    looking_for: Option<String>,
+    limit: Option<u32>,
+}
+
+#[derive(Serialize, Debug)]
+pub struct SuggestTagResponse {
+    #[serde(rename = "type")]
+    pub tag_type: String,
+    pub label: String,
+    pub value: String,
+    pub category: u8,
+    pub post_count: u64,
+}
+
+impl From<String> for SuggestTagResponse {
+    fn from(value: String) -> Self {
+        Self {
+            tag_type: "tag-word".to_string(),
+            label: value.replace("_", " "),
+            value,
+            category: 4,
+            post_count: 0,
+        }
+    }
+}
+
+pub async fn suggest_tags(
+    State(app): State<AppState>,
+    Query(params): Query<SuggestTagQuery>,
+) -> Result<Json<Vec<SuggestTagResponse>>, TagError> {
+    let query = query::TagQuery::new(
+        params
+            .looking_for
+            .map(TagQueryExpr::Prefix)
+            .map(TagQueryKind::Where)
+            .unwrap_or(TagQueryKind::All),
+    )
+    .with_limit(params.limit.unwrap_or(20));
+
+    let results = query_tags(&app.db, query).await?;
+
+    Ok(Json(
+        results.into_iter().map(SuggestTagResponse::from).collect(),
+    ))
+}
+
 pub enum TagError {
     App(AppError),
     // BadRequest(String),

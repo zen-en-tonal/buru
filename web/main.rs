@@ -82,6 +82,7 @@ async fn main() {
         .route("/images/{id}", get(image::get_image))
         .route("/images/{id}/tags", put(image::put_tags))
         .route("/tags", get(tag::get_tags))
+        .route("/tags/suggest", get(tag::suggest_tags))
         .route("/files/{vari}/{*hash}", get(serve_file))
         .layer(DefaultBodyLimit::max(config.body_limit))
         .with_state(config.into_state().await);
