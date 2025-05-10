@@ -139,62 +139,86 @@ impl Database {
         Ok(())
     }
 
-    /// Ensures that a tag is present in the `tags` table.
+    /// Ensures that a tags is present in the `tags` table.
     ///
     /// This will insert the tag string if it does not already exist.
     /// Returns `DatabaseError::QueryFailed` if the query fails.
-    pub async fn ensure_tag(&self, tag: &str) -> Result<(), DatabaseError> {
+    pub async fn ensure_tags(&self, tags: &[&str]) -> Result<(), DatabaseError> {
         let stmt = CurrentDialect::ensure_tag_statement();
 
         self.retry(|| async {
-            let query = sqlx::query(stmt).bind(tag);
-            let sql = query.sql();
-            query
-                .execute(&self.pool)
+            let mut tx = self
+                .pool
+                .begin()
                 .await
-                .map_err(|e| DatabaseError::QueryFailed {
-                    operation: DbOperation::InsertTag {
-                        tag: tag.to_string(),
-                    },
-                    sql: sql.to_string(),
-                    source: e,
-                })
+                .map_err(|e| DatabaseError::TransactionFailed { source: e })?;
+
+            for tag in tags.iter() {
+                let query = sqlx::query(stmt).bind(tag);
+                let sql = query.sql();
+                query
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| DatabaseError::QueryFailed {
+                        operation: DbOperation::InsertTag {
+                            tag: tag.to_string(),
+                        },
+                        sql: sql.to_string(),
+                        source: e,
+                    })?;
+            }
+
+            tx.commit()
+                .await
+                .map_err(|e| DatabaseError::TransactionFailed { source: e })
         })
         .await?;
 
         Ok(())
     }
 
-    /// Ensures that the given image has the given tag.
+    /// Ensures that the given image has the given tags.
     ///
     /// Internally, this calls [`Database::ensure_image`] and [`Database::ensure_tag`] first, and then
     /// inserts into `image_tags` to relate them.
     ///
     /// This method is idempotent and safe to call multiple times.
-    pub async fn ensure_image_has_tag(
+    pub async fn ensure_image_has_tags(
         &self,
         hash: &PixelHash,
-        tag: &str,
+        tags: &[&str],
     ) -> Result<(), DatabaseError> {
         self.ensure_image(hash).await?;
-        self.ensure_tag(tag).await?;
+        self.ensure_tags(tags).await?;
 
         let stmt = CurrentDialect::ensure_image_tag_statement();
 
         self.retry(|| async {
-            sqlx::query(stmt)
-                .bind(hash.clone().to_string())
-                .bind(tag)
-                .execute(&self.pool)
+            let mut tx = self
+                .pool
+                .begin()
                 .await
-                .map_err(|e| DatabaseError::QueryFailed {
-                    operation: DbOperation::InsertImageTag {
-                        hash: hash.clone(),
-                        tag: tag.to_string(),
-                    },
-                    sql: stmt.to_string(),
-                    source: e,
-                })
+                .map_err(|e| DatabaseError::TransactionFailed { source: e })?;
+
+            for tag in tags.iter() {
+                let query = sqlx::query(stmt).bind(hash.to_string()).bind(tag);
+                let sql = query.sql();
+                query
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| DatabaseError::QueryFailed {
+                        operation: DbOperation::InsertImageTag {
+                            hash: hash.clone(),
+                            tag: tag.to_string(),
+                        },
+                        sql: sql.to_string(),
+                        source: e,
+                    })?;
+            }
+
+            tx.commit()
+                .await
+                .map_err(|e| DatabaseError::TransactionFailed { source: e })
         })
         .await?;
 
@@ -360,27 +384,39 @@ impl Database {
     /// Ensures that a specific tag is removed from the image.
     ///
     /// This removes one (image_hash, tag) relation from `image_tags`.
-    pub async fn ensure_tag_removed(
+    pub async fn ensure_tags_removed(
         &self,
         hash: &PixelHash,
-        tag: &str,
+        tags: &[&str],
     ) -> Result<(), DatabaseError> {
         let stmt = CurrentDialect::delete_image_tag_statement();
 
         self.retry(|| async {
-            sqlx::query(stmt)
-                .bind(hash.clone().to_string())
-                .bind(tag)
-                .execute(&self.pool)
+            let mut tx = self
+                .pool
+                .begin()
                 .await
-                .map_err(|e| DatabaseError::QueryFailed {
-                    operation: DbOperation::DeleteImageTag {
-                        hash: hash.clone(),
-                        tag: tag.to_string(),
-                    },
-                    sql: stmt.to_string(),
-                    source: e,
-                })
+                .map_err(|e| DatabaseError::TransactionFailed { source: e })?;
+
+            for tag in tags.iter() {
+                let query = sqlx::query(stmt).bind(hash.to_string()).bind(tag);
+                let sql = query.sql();
+                query
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| DatabaseError::QueryFailed {
+                        operation: DbOperation::DeleteImageTag {
+                            hash: hash.clone(),
+                            tag: tag.to_string(),
+                        },
+                        sql: sql.to_string(),
+                        source: e,
+                    })?;
+            }
+
+            tx.commit()
+                .await
+                .map_err(|e| DatabaseError::TransactionFailed { source: e })
         })
         .await?;
 
@@ -646,9 +682,9 @@ mod tests {
         let image = PixelHash::try_from("329435e5e66be809").unwrap();
 
         // Add tags "cat" and "dog" (including duplicate insertions)
-        assert!(db.ensure_image_has_tag(&image, "cat").await.is_ok());
-        assert!(db.ensure_image_has_tag(&image, "cat").await.is_ok());
-        assert!(db.ensure_image_has_tag(&image, "dog").await.is_ok());
+        assert!(db.ensure_image_has_tags(&image, &["cat"]).await.is_ok());
+        assert!(db.ensure_image_has_tags(&image, &["cat"]).await.is_ok());
+        assert!(db.ensure_image_has_tags(&image, &["dog"]).await.is_ok());
 
         // Confirm both tags are present
         assert_eq!(
@@ -657,8 +693,8 @@ mod tests {
         );
 
         // Remove "dog" tag twice (should be safe and idempotent)
-        assert!(db.ensure_tag_removed(&image, "dog").await.is_ok());
-        assert!(db.ensure_tag_removed(&image, "dog").await.is_ok());
+        assert!(db.ensure_tags_removed(&image, &["dog"]).await.is_ok());
+        assert!(db.ensure_tags_removed(&image, &["dog"]).await.is_ok());
 
         // Confirm only "cat" remains
         assert_eq!(vec!["cat".to_string()], db.get_tags(&image).await.unwrap());
@@ -673,15 +709,15 @@ mod tests {
         let image_dog = PixelHash::try_from("229435e5e66be809").unwrap();
         let image_cat_and_dog = PixelHash::try_from("129435e5e66be809").unwrap();
 
-        assert!(db.ensure_image_has_tag(&image_cat, "cat").await.is_ok());
-        assert!(db.ensure_image_has_tag(&image_dog, "dog").await.is_ok());
+        assert!(db.ensure_image_has_tags(&image_cat, &["cat"]).await.is_ok());
+        assert!(db.ensure_image_has_tags(&image_dog, &["dog"]).await.is_ok());
         assert!(
-            db.ensure_image_has_tag(&image_cat_and_dog, "cat")
+            db.ensure_image_has_tags(&image_cat_and_dog, &["cat"])
                 .await
                 .is_ok()
         );
         assert!(
-            db.ensure_image_has_tag(&image_cat_and_dog, "dog")
+            db.ensure_image_has_tags(&image_cat_and_dog, &["dog"])
                 .await
                 .is_ok()
         );
@@ -713,8 +749,8 @@ mod tests {
         let pool = get_pool().await;
         let db = Database::with_migration(pool.clone()).await.unwrap();
 
-        assert!(db.ensure_tag("cat").await.is_ok());
-        assert!(db.ensure_tag("dog").await.is_ok());
+        assert!(db.ensure_tags(&["cat"]).await.is_ok());
+        assert!(db.ensure_tags(&["dog"]).await.is_ok());
 
         let query_cat = TagQuery::new(TagQueryKind::Where(TagQueryExpr::Exact("cat".to_string())));
         let query_dog = TagQuery::new(TagQueryKind::Where(TagQueryExpr::Exact("dog".to_string())));

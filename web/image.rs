@@ -338,12 +338,8 @@ pub async fn put_tags(
     Path(id): Path<i64>,
     Query(params): Query<ImageQuery>,
 ) -> Result<Json<ImageResponse>, ImageError> {
-    let tags = params
-        .tags
-        .unwrap_or_default()
-        .split_whitespace()
-        .map(String::from)
-        .collect::<Vec<_>>();
+    let tags = params.tags.unwrap_or_default();
+    let tags = tags.split_whitespace().collect::<Vec<_>>();
     let hash = PixelHash::from_signed(id);
 
     attach_tags(&app.db, &app.storage, &hash, &tags).await?;

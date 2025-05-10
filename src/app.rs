@@ -61,7 +61,13 @@ impl ArchiveImageCommand {
         db.ensure_image_has_metadata(&hash, &metadata).await?;
 
         if !self.tags.is_empty() {
-            attach_tags(db, storage, &hash, &self.tags).await?;
+            attach_tags(
+                db,
+                storage,
+                &hash,
+                &self.tags.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
+            )
+            .await?;
         }
 
         if let Some(src) = self.source {
@@ -80,41 +86,21 @@ pub async fn attach_tags(
     db: &Database,
     storage: &Storage,
     hash: &PixelHash,
-    tags: &[String],
+    tags: &[&str],
 ) -> Result<(), AppError> {
     if storage.index_file(hash).is_none() {
         return Err(AppError::StorageNotFound { hash: hash.clone() });
     }
 
-    let mut set = JoinSet::new();
+    let desired: HashSet<&str> = tags.into_iter().copied().collect();
+    let current = db.get_tags(hash).await?;
+    let current: HashSet<&str> = current.iter().map(|f| f.as_str()).collect();
 
-    let desired: HashSet<String> = tags.to_vec().into_iter().collect();
-    let current: HashSet<String> = db.get_tags(hash).await?.into_iter().collect();
+    let to_add: Vec<&str> = desired.difference(&current).into_iter().copied().collect();
+    let to_remove: Vec<&str> = current.difference(&desired).into_iter().copied().collect();
 
-    let to_add = desired.difference(&current);
-    let to_remove = current.difference(&desired);
-
-    for tag in to_add {
-        let db = db.clone();
-        let hash = hash.clone();
-        let tag = tag.to_string();
-        set.spawn(async move { db.ensure_image_has_tag(&hash, &tag).await });
-    }
-
-    for tag in to_remove {
-        let db = db.clone();
-        let hash = hash.clone();
-        let tag = tag.to_string();
-        set.spawn(async move { db.ensure_tag_removed(&hash, &tag).await });
-    }
-
-    while let Some(result) = set.join_next().await {
-        match result {
-            Ok(Ok(())) => (),
-            Ok(Err(e)) => return Err(AppError::Database(e)),
-            Err(join_err) => panic!("task panicked in image retrieval: {join_err}"),
-        }
-    }
+    db.ensure_image_has_tags(&hash, to_add.as_slice()).await?;
+    db.ensure_tags_removed(&hash, to_remove.as_slice()).await?;
 
     Ok(())
 }
@@ -319,7 +305,7 @@ mod tests {
             .execute(&storage, &db)
             .await
             .unwrap();
-        let desired = &["cat".to_string(), "cute".to_string()];
+        let desired = &["cat", "cute"];
 
         attach_tags(&db, &storage, &image.hash, desired)
             .await
