@@ -14,11 +14,20 @@ pub type Db = sqlx::Sqlite;
 
 type CurrentRow = sqlx::sqlite::SqliteRow;
 
+/// Run database migrations using the pool provided.
+///
+/// # Arguments
+///
+/// * `pool` - The connection pool to the database.
+///
+/// # Returns
+///
+/// This function returns a `Result` indicating success or failure during
+/// the migration process.
 pub async fn run_migration(pool: &sqlx::Pool<Db>) -> Result<(), sqlx::Error> {
     for stmt in CurrentDialect::migration() {
         sqlx::query(stmt).execute(pool).await?;
     }
-
     Ok(())
 }
 
@@ -54,6 +63,15 @@ pub struct Database {
 }
 
 impl Database {
+    /// Construct a `Database` with migrations through the provided pool.
+    ///
+    /// # Arguments
+    ///
+    /// * `pool` - The connection pool to the database.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the constructed `Database`.
     pub async fn with_migration(pool: sqlx::Pool<Db>) -> Result<Self, sqlx::Error> {
         run_migration(&pool).await?;
 
@@ -85,7 +103,14 @@ impl Database {
     /// Ensures that an image is present in the `images` table.
     ///
     /// This will insert the image hash if it does not already exist.
-    /// On failure (e.g., DB error), returns a `DatabaseError::QueryFailed`.
+    ///
+    /// # Arguments
+    ///
+    /// * `hash` - The pixel hash of the image to insert.
+    ///
+    /// # Returns
+    ///
+    /// This function returns a `Result` indicating success or failure.
     pub async fn ensure_image(&self, hash: &PixelHash) -> Result<(), DatabaseError> {
         let stmt = CurrentDialect::ensure_image_statement();
 
@@ -106,6 +131,16 @@ impl Database {
         Ok(())
     }
 
+    /// Ensures that an image has associated metadata in the database.
+    ///
+    /// # Arguments
+    ///
+    /// * `hash` - The pixel hash of the image.
+    /// * `metadata` - The metadata attributes of the image.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` indicating success or failure of ensuring the metadata.
     pub async fn ensure_image_has_metadata(
         &self,
         hash: &PixelHash,
@@ -139,10 +174,15 @@ impl Database {
         Ok(())
     }
 
-    /// Ensures that a tags is present in the `tags` table.
+    /// Ensures that a set of tags is present in the `tags` table.
     ///
-    /// This will insert the tag string if it does not already exist.
-    /// Returns `DatabaseError::QueryFailed` if the query fails.
+    /// # Arguments
+    ///
+    /// * `tags` - A slice of tag strings to ensure existence in the database.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` indicating success or failure.
     pub async fn ensure_tags(&self, tags: &[&str]) -> Result<(), DatabaseError> {
         let stmt = CurrentDialect::ensure_tag_statement();
 
@@ -173,16 +213,19 @@ impl Database {
                 .map_err(|e| DatabaseError::TransactionFailed { source: e })
         })
         .await?;
-
         Ok(())
     }
 
-    /// Ensures that the given image has the given tags.
+    /// Ensures that an image is associated with given tags.
     ///
-    /// Internally, this calls [`Database::ensure_image`] and [`Database::ensure_tag`] first, and then
-    /// inserts into `image_tags` to relate them.
+    /// # Arguments
     ///
-    /// This method is idempotent and safe to call multiple times.
+    /// * `hash` - The pixel hash of the image.
+    /// * `tags` - A slice of tag strings to associate with the image.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` indicating success or failure.
     pub async fn ensure_image_has_tags(
         &self,
         hash: &PixelHash,
@@ -225,6 +268,16 @@ impl Database {
         Ok(())
     }
 
+    /// Ensures that an image is associated with a source string.
+    ///
+    /// # Arguments
+    ///
+    /// * `hash` - The pixel hash of the image.
+    /// * `source` - The source string to associate with the image.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` indicating success or failure.
     pub async fn ensure_image_has_source(
         &self,
         hash: &PixelHash,
@@ -255,10 +308,15 @@ impl Database {
         Ok(())
     }
 
-    /// Performs a tag-based query on images using a [`Query`] expression tree.
+    /// Performs a tag-based query on images using an expression tree.
     ///
-    /// Returns a list of image hashes that match the query.
-    /// Query construction is handled by the `Query` module.
+    /// # Arguments
+    ///
+    /// * `query` - The query expression representing the image search criteria.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing a vector of image hashes that match the query.
     pub async fn query_image(&self, query: ImageQuery) -> Result<Vec<PixelHash>, DatabaseError> {
         let (sql, params) = query.to_sql();
         let stmt = CurrentDialect::query_image_statement(sql);
@@ -287,6 +345,15 @@ impl Database {
         Ok(hashes)
     }
 
+    /// Performs a count of images that match a given query expression.
+    ///
+    /// # Arguments
+    ///
+    /// * `query` - The query expression representing the image search criteria.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the count of images that match the query.
     pub async fn count_image(&self, query: ImageQuery) -> Result<u64, DatabaseError> {
         let (sql, params) = query.to_sql();
         let stmt = CurrentDialect::count_image_statement(sql);
@@ -312,6 +379,15 @@ impl Database {
         Ok(count)
     }
 
+    /// Performs a query on tags using a query expression tree.
+    ///
+    /// # Arguments
+    ///
+    /// * `query` - The query expression representing the tag search criteria.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing a vector of tag strings that match the query.
     pub async fn query_tags(&self, query: TagQuery) -> Result<Vec<String>, DatabaseError> {
         let (sql, params) = query.to_sql();
         let stmt = CurrentDialect::query_tag_statement(sql);
@@ -341,7 +417,13 @@ impl Database {
 
     /// Returns a list of tags associated with the given image hash.
     ///
-    /// If no tags exist, returns an empty vector.
+    /// # Arguments
+    ///
+    /// * `hash` - The pixel hash of the image to lookup.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing a vector of tag strings associated with the image.
     pub async fn get_tags(&self, hash: &PixelHash) -> Result<Vec<String>, DatabaseError> {
         let stmt = CurrentDialect::query_tags_by_image_statement();
 
@@ -362,6 +444,16 @@ impl Database {
         Ok(rows)
     }
 
+    /// Retrieves metadata for a given image hash.
+    ///
+    /// # Arguments
+    ///
+    /// * `hash` - The pixel hash of the image.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing an `Option` of `ImageMetadata`.
+    /// The `Option` will be `None` if metadata is not found.
     pub async fn get_metadata(
         &self,
         hash: &PixelHash,
@@ -385,6 +477,16 @@ impl Database {
         Ok(metadata)
     }
 
+    /// Retrieves the source information for a given image hash.
+    ///
+    /// # Arguments
+    ///
+    /// * `hash` - The pixel hash of the image.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing an `Option` of the source string.
+    /// The `Option` will be `None` if the source is not found.
     pub async fn get_source(&self, hash: &PixelHash) -> Result<Option<String>, DatabaseError> {
         let soruce: Option<String> = self
             .retry(|| async {
@@ -406,9 +508,16 @@ impl Database {
         Ok(soruce)
     }
 
-    /// Ensures that a specific tag is removed from the image.
+    /// Ensures that specific tags are removed from the image.
     ///
-    /// This removes one (image_hash, tag) relation from `image_tags`.
+    /// # Arguments
+    ///
+    /// * `hash` - The pixel hash of the image.
+    /// * `tags` - A slice of tag strings to remove from the image.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` indicating success or failure.
     pub async fn ensure_tags_removed(
         &self,
         hash: &PixelHash,
@@ -455,6 +564,14 @@ impl Database {
     /// 2. Deletes the image row in `images`
     ///
     /// If any step fails, the entire transaction is rolled back.
+    ///
+    /// # Arguments
+    ///
+    /// * `hash` - The pixel hash of the image to be removed.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` indicating success or failure.
     pub async fn ensure_image_removed(&self, hash: &PixelHash) -> Result<(), DatabaseError> {
         let stmt_tags = CurrentDialect::delete_tags_by_image_statement();
         let stmt_image = CurrentDialect::delete_image_statement();
@@ -518,49 +635,72 @@ pub enum DatabaseError {
     },
 }
 
-/// Enum representing the kind of database operation being performed,
-/// used for attaching context to [`DatabaseError::QueryFailed`].
+/// Enum representing the kind of database operation being performed.
+///
+/// This enum is primarily used for attaching context to
+/// [`DatabaseError::QueryFailed`], enabling more detailed error messages
+/// that describe the specific operation that triggered an error.
 #[derive(Debug)]
 pub enum DbOperation {
-    /// INSERT INTO images
+    /// Operation for inserting a new entry into the `images` table.
     InsertImage {
+        /// The hash of the image to be inserted, serving as a unique identifier.
         hash: PixelHash,
     },
-    /// INSERT INTO tags
+    /// Operation for inserting a new entry into the `tags` table.
     InsertTag {
+        /// The tag string to be inserted into the database.
         tag: String,
     },
-    /// INSERT INTO image_tags
+    /// Operation for inserting a new entry into the `image_tags` table,
+    /// which associates images with tags.
     InsertImageTag {
+        /// The hash of the image to associate with the tag.
         hash: PixelHash,
+        /// The tag string to associate with the image.
         tag: String,
     },
-    /// DELETE FROM image_tags WHERE ...
+    /// Operation for deleting a specific tag association from the `image_tags` table.
     DeleteImageTag {
+        /// The hash of the image from which to remove the tag.
         hash: PixelHash,
+        /// The tag string to be removed from the image.
         tag: String,
     },
-    /// DELETE FROM images WHERE ...
+    /// Operation for deleting an image entry from the `images` table.
     DeleteImage {
+        /// The hash of the image to be deleted, serving as a unique identifier.
         hash: PixelHash,
     },
-    /// DELETE FROM image_tags WHERE image_hash = ...
+    /// Operation for deleting all tag associations for a given image
+    /// from the `image_tags` table.
     DeleteImageTags {
+        /// The hash of the image for which all tags are to be removed.
         hash: PixelHash,
     },
-    /// SELECT tag_name FROM image_tags WHERE image_hash = ...
+    /// Operation for querying tags associated with a specific image hash
+    /// from the `image_tags` table.
     QueryImageTags {
+        /// The hash of the image whose associated tags are to be queried.
         hash: PixelHash,
     },
-    /// General image query using dynamic conditions
+    /// General operation for querying images using complex, dynamic conditions
+    /// specified by the user.
     QueryImages,
+    /// Operation for inserting metadata associated with an image into the database.
     InsertMetadata {
+        /// The `ImageMetadata` struct containing details about the image.
         metadata: ImageMetadata,
     },
+    /// Operation for updating the source information of an image
+    /// in the `images` table.
     UpdateImageSource {
+        /// The hash of the image whose source information is to be updated.
         hash: PixelHash,
+        /// The new source string to associate with the image.
         source: String,
     },
+    /// Operation for querying tags from the `tags` table.
     QueryTags,
 }
 
@@ -611,10 +751,10 @@ mod tests {
         Database::with_migration(pool.clone()).await.unwrap();
     }
 
-    /// Ensures that inserting the same image multiple times does not result in error.
+    /// Ensures that the same image can be inserted multiple times without causing an error.
     ///
-    /// This tests both insertion success and idempotency:
-    /// `ensure_image` should silently succeed even if the image already exists.
+    /// This function tests both the success of the insertion and idempotency, confirming
+    /// that `ensure_image` executes successfully even if the image already exists in the database.
     #[tokio::test]
     async fn test_ensure_image() {
         let pool = get_pool().await;
@@ -626,6 +766,10 @@ mod tests {
         assert!(db.ensure_image(&image).await.is_ok());
     }
 
+    /// Ensures that an image can have an associated source and that it can be correctly retrieved.
+    ///
+    /// This test confirms the functionality of associating a source string with an image and
+    /// ensures that this data can be accurately retrieved afterwards.
     #[tokio::test]
     async fn test_ensure_source() {
         let pool = get_pool().await;
@@ -640,10 +784,10 @@ mod tests {
         );
     }
 
-    /// Ensures that inserting the same image multiple times does not result in error.
+    /// Ensures that inserting the same metadata multiple times does not result in an error.
     ///
-    /// This tests both insertion success and idempotency:
-    /// `ensure_image` should silently succeed even if the image already exists.
+    /// This test validates both the success of metadata insertion and idempotency,
+    /// confirming that `ensure_image_has_metadata` can be executed on existing metadata without errors.
     #[tokio::test]
     async fn test_ensure_metadata() {
         let pool = get_pool().await;
@@ -658,7 +802,6 @@ mod tests {
             file_size: 1337,
             created_at: Some(DateTime::from_str("2025-05-02T01:18:49.678809123Z").unwrap()),
         };
-
         assert!(
             db.ensure_image_has_metadata(&image, &metadata)
                 .await
@@ -671,6 +814,10 @@ mod tests {
         );
     }
 
+    /// Ensures that metadata can be inserted and retrieved correctly without a `created_at` value.
+    ///
+    /// This test confirms that `ensure_image_has_metadata` correctly handles metadata entries
+    /// that lack a `created_at` field.
     #[tokio::test]
     async fn test_ensure_metadata_without_created_at() {
         let pool = get_pool().await;
@@ -685,7 +832,6 @@ mod tests {
             file_size: 1337,
             created_at: None,
         };
-
         assert!(
             db.ensure_image_has_metadata(&image, &metadata)
                 .await
@@ -694,11 +840,11 @@ mod tests {
         assert!(db.get_metadata(&image).await.unwrap().is_some());
     }
 
-    /// Full test of tag operations:
-    /// - Add tags to an image
-    /// - Add duplicate tags safely
-    /// - Remove tags idempotently
-    /// - Verify final tag list is correct
+    /// Performs a comprehensive test of image tag operations including:
+    /// - Adding tags to an image
+    /// - Preventing duplicate tags
+    /// - Removing tags safely and idempotently
+    /// - Verifying the final list of tags.
     #[tokio::test]
     async fn test_operate_image_tag() {
         let pool = get_pool().await;
@@ -725,6 +871,11 @@ mod tests {
         assert_eq!(vec!["cat".to_string()], db.get_tags(&image).await.unwrap());
     }
 
+    /// Tests image querying based on tags, verifying that images are returned
+    /// according to the specified criteria.
+    ///
+    /// This ensures that the query results match the expected images for "cat",
+    /// "dog", and "cat and dog" parameters.
     #[tokio::test]
     async fn test_query_image() {
         let pool = get_pool().await;
@@ -769,6 +920,11 @@ mod tests {
         );
     }
 
+    /// Tests the image counting functionality based on specific query criteria,
+    /// ensuring correctness of count results.
+    ///
+    /// This test confirms that the counted results match the expected count for
+    /// images associated with "cat", "dog", and both "cat and dog" tags.
     #[tokio::test]
     async fn test_count_image() {
         let pool = get_pool().await;
@@ -797,6 +953,9 @@ mod tests {
         assert_eq!(1, db.count_image(query_cat_and_dog).await.unwrap());
     }
 
+    /// Tests the querying of tags ensuring they can be accurately retrieved based on different query types.
+    ///
+    /// This confirms the correct behavior for exact match, containment, and retrieval of all tag entries.
     #[tokio::test]
     async fn test_query_tags() {
         let pool = get_pool().await;

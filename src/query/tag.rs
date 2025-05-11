@@ -1,35 +1,49 @@
 use crate::dialect::{CurrentDialect, Dialect};
 
+/// Represents a logical expression for querying tags.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TagQueryExpr {
+    /// Matches tags that are exactly equal to the given string.
     Exact(String),
 
+    /// Matches tags that start with the given prefix.
     Prefix(String),
 
+    /// Matches tags that contain the given substring.
     Contains(String),
 
+    /// Logical AND of two expressions.
     And(Box<TagQueryExpr>, Box<TagQueryExpr>),
 
+    /// Logical OR of two expressions.
     Or(Box<TagQueryExpr>, Box<TagQueryExpr>),
 
+    /// Logical NOT of an expression.
     Not(Box<TagQueryExpr>),
 }
 
 impl TagQueryExpr {
+    /// Combines the current expression with another using a logical AND.
     pub fn and(self, other: TagQueryExpr) -> Self {
         Self::And(Box::new(self), Box::new(other))
     }
 
+    /// Combines the current expression with another using a logical OR.
     pub fn or(self, other: TagQueryExpr) -> Self {
         Self::Or(Box::new(self), Box::new(other))
     }
 
+    /// Converts the logical expression to an SQL clause and parameters.
+    ///
+    /// # Returns
+    /// - `(String, Vec<String>)`: SQL clause and ordered parameters
     pub fn to_sql(&self) -> (String, Vec<String>) {
         let mut params = Vec::new();
         let sql = self.build_sql(&mut params);
         (sql, params)
     }
 
+    /// Recursively builds the SQL clause for the expression and collects parameters.
     fn build_sql(&self, params: &mut Vec<String>) -> String {
         match self {
             TagQueryExpr::Exact(name) => {
@@ -57,13 +71,21 @@ impl TagQueryExpr {
     }
 }
 
+/// Represents the kind of query being performed on tags.
 #[derive(Debug, Clone)]
 pub enum TagQueryKind {
+    /// Query all tags without any conditions.
     All,
+
+    /// Query tags that satisfy a certain logical expression.
     Where(TagQueryExpr),
 }
 
 impl TagQueryKind {
+    /// Converts the query kind into an SQL clause and parameters.
+    ///
+    /// # Returns
+    /// - `(String, Vec<String>)`: SQL clause and ordered parameters
     pub fn to_sql(&self) -> (String, Vec<String>) {
         match self {
             TagQueryKind::All => ("".to_string(), vec![]),
@@ -75,7 +97,7 @@ impl TagQueryKind {
     }
 }
 
-/// Represents a full query including logical expression and pagination.
+/// Represents a complete query, including logical expression and pagination.
 #[derive(Debug, Clone)]
 pub struct TagQuery {
     /// The logical expression used for filtering.
