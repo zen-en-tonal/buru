@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::AppState;
 use axum::{
     Json,
@@ -6,11 +8,22 @@ use axum::{
     response::IntoResponse,
 };
 use buru::{
-    app::{AppError, query_tags},
-    query::{self, TagQueryExpr, TagQueryKind},
+    app::{AppError, count_image, query_tags},
+    database::Database,
+    query::{self, ImageQuery, ImageQueryKind, TagQueryExpr, TagQueryKind},
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use std::hash::Hasher;
+use twox_hash::XxHash64;
+
+#[allow(overflowing_literals)]
+fn compute_hash(tag: &str) -> i64 {
+    let mut hasher = XxHash64::with_seed(0);
+    hasher.write(tag.as_bytes());
+
+    (hasher.finish() as i64) ^ 0x8000_0000_0000_0000
+}
 
 #[derive(Deserialize)]
 pub struct TagQuery {
@@ -22,7 +35,7 @@ pub struct TagQuery {
 
 #[derive(Serialize, Debug)]
 pub struct TagResponse {
-    pub id: u64,
+    pub id: i64,
     pub name: String,
     pub post_count: u64,
     pub created_at: String,
@@ -31,12 +44,12 @@ pub struct TagResponse {
     pub words: Vec<String>,
 }
 
-impl From<String> for TagResponse {
-    fn from(value: String) -> Self {
+impl TagResponse {
+    fn from(value: &str, count: u64) -> Self {
         Self {
-            id: 0,
-            name: value.clone(),
-            post_count: 0,
+            id: compute_hash(value),
+            name: value.to_string(),
+            post_count: count,
             created_at: Utc::now().to_rfc3339(),
             updated_at: Utc::now().to_rfc3339(),
             is_deprecated: false,
@@ -67,9 +80,15 @@ pub async fn get_tags(
     .with_limit(params.limit.unwrap_or(20))
     .with_offset((params.page.unwrap_or(1) - 1) * params.limit.unwrap_or(20));
 
-    let results = query_tags(&app.db, query).await?;
+    let tags = query_tags(&app.db, query).await?;
+    let tags: Vec<&str> = tags.iter().map(|s| s.as_str()).collect();
+    let counts = tag_counts(&app.db, tags.as_slice()).await?;
+    let resp: Vec<TagResponse> = tags
+        .into_iter()
+        .map(|tag| TagResponse::from(tag, *counts.get(tag).unwrap_or(&0)))
+        .collect();
 
-    Ok(Json(results.into_iter().map(TagResponse::from).collect()))
+    Ok(Json(resp))
 }
 
 #[derive(Deserialize)]
@@ -89,14 +108,40 @@ pub struct SuggestTagResponse {
     pub post_count: u64,
 }
 
-impl From<String> for SuggestTagResponse {
-    fn from(value: String) -> Self {
+async fn tag_counts(db: &Database, tags: &[&str]) -> Result<HashMap<String, u64>, TagError> {
+    let mut set = tokio::task::JoinSet::new();
+
+    for tag in tags.iter() {
+        let db = db.clone();
+        let tag = tag.to_string();
+        set.spawn(async move {
+            let count = post_count(&db, &tag).await?;
+            Ok::<(String, u64), TagError>((tag, count))
+        });
+    }
+
+    let mut map = HashMap::new();
+    while let Some(result) = set.join_next().await {
+        match result {
+            Ok(Ok((tag, count))) => {
+                map.insert(tag, count);
+            }
+            Ok(Err(e)) => return Err(e),
+            Err(join_err) => panic!("task panicked in post count retrieval: {join_err}"),
+        }
+    }
+
+    Ok(map)
+}
+
+impl SuggestTagResponse {
+    fn from(tag: &str, count: u64) -> Self {
         Self {
             tag_type: "tag-word".to_string(),
-            label: value.replace("_", " "),
-            value,
-            category: 4,
-            post_count: 0,
+            label: tag.replace("_", " "),
+            value: tag.to_string(),
+            category: 1,
+            post_count: count,
         }
     }
 }
@@ -114,11 +159,23 @@ pub async fn suggest_tags(
     )
     .with_limit(params.limit.unwrap_or(20));
 
-    let results = query_tags(&app.db, query).await?;
+    let tags = query_tags(&app.db, query).await?;
+    let tags: Vec<&str> = tags.iter().map(|s| s.as_str()).collect();
+    let counts = tag_counts(&app.db, tags.as_slice()).await?;
+    let resp: Vec<SuggestTagResponse> = tags
+        .into_iter()
+        .map(|tag| SuggestTagResponse::from(tag, *counts.get(tag).unwrap_or(&0)))
+        .collect();
 
-    Ok(Json(
-        results.into_iter().map(SuggestTagResponse::from).collect(),
-    ))
+    Ok(Json(resp))
+}
+
+async fn post_count(db: &Database, tag: &str) -> Result<u64, TagError> {
+    let query = ImageQuery::new(ImageQueryKind::Where(query::ImageQueryExpr::tag(
+        tag.to_string(),
+    )));
+
+    Ok(count_image(db, query).await?)
 }
 
 pub enum TagError {

@@ -287,6 +287,31 @@ impl Database {
         Ok(hashes)
     }
 
+    pub async fn count_image(&self, query: ImageQuery) -> Result<u64, DatabaseError> {
+        let (sql, params) = query.to_sql();
+        let stmt = CurrentDialect::count_image_statement(sql);
+
+        let count = self
+            .retry(|| async {
+                let mut q = sqlx::query_scalar(&stmt);
+
+                for param in &params {
+                    q = q.bind(param);
+                }
+
+                q.fetch_one(&self.pool)
+                    .await
+                    .map_err(|e| DatabaseError::QueryFailed {
+                        operation: DbOperation::QueryImages,
+                        sql: stmt.to_string(),
+                        source: e,
+                    })
+            })
+            .await?;
+
+        Ok(count)
+    }
+
     pub async fn query_tags(&self, query: TagQuery) -> Result<Vec<String>, DatabaseError> {
         let (sql, params) = query.to_sql();
         let stmt = CurrentDialect::query_tag_statement(sql);
@@ -742,6 +767,34 @@ mod tests {
             vec![image_cat_and_dog],
             db.query_image(query_cat_and_dog).await.unwrap()
         );
+    }
+
+    #[tokio::test]
+    async fn test_count_image() {
+        let pool = get_pool().await;
+        let db = Database::with_migration(pool.clone()).await.unwrap();
+
+        let image_cat = PixelHash::try_from("329435e5e66be809").unwrap();
+        let image_dog = PixelHash::try_from("229435e5e66be809").unwrap();
+        let image_cat_and_dog = PixelHash::try_from("129435e5e66be809").unwrap();
+
+        assert!(db.ensure_image_has_tags(&image_cat, &["cat"]).await.is_ok());
+        assert!(db.ensure_image_has_tags(&image_dog, &["dog"]).await.is_ok());
+        assert!(
+            db.ensure_image_has_tags(&image_cat_and_dog, &["cat", "dog"])
+                .await
+                .is_ok()
+        );
+
+        let query_cat = ImageQuery::new(ImageQueryKind::Where(ImageQueryExpr::tag("cat")));
+        let query_dog = ImageQuery::new(ImageQueryKind::Where(ImageQueryExpr::tag("dog")));
+        let query_cat_and_dog = ImageQuery::new(ImageQueryKind::Where(
+            ImageQueryExpr::tag("cat").and(ImageQueryExpr::tag("dog")),
+        ));
+
+        assert_eq!(2, db.count_image(query_cat).await.unwrap());
+        assert_eq!(2, db.count_image(query_dog).await.unwrap());
+        assert_eq!(1, db.count_image(query_cat_and_dog).await.unwrap());
     }
 
     #[tokio::test]

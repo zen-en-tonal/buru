@@ -211,6 +211,10 @@ pub async fn query_image(
     Ok(images)
 }
 
+pub async fn count_image(db: &Database, query: ImageQuery) -> Result<u64, AppError> {
+    Ok(db.count_image(query).await?)
+}
+
 /// Executes a tag query against the database and returns matching tag names.
 pub async fn query_tags(db: &Database, query: TagQuery) -> Result<Vec<String>, AppError> {
     db.query_tags(query).await.map_err(AppError::from)

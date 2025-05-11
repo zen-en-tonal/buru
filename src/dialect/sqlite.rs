@@ -114,4 +114,8 @@ impl Dialect for SqliteDialect {
     fn update_source_statement() -> &'static str {
         "UPDATE images SET source = ? WHERE hash = ?"
     }
+
+    fn count_image_statement(condition: String) -> String {
+        format!("SELECT COUNT(hash) FROM image_with_metadata {}", condition)
+    }
 }
