@@ -142,6 +142,27 @@ impl Storage {
         Ok(())
     }
 
+    /// Retrieves metadata for an image file associated with a given pixel hash.
+    ///
+    /// This function attempts to locate the image file corresponding to the provided
+    /// pixel hash within the storage system. If found, it reads the file and extracts
+    /// detailed metadata about the image, such as its dimensions, format, color type,
+    /// file size, and filesystem creation timestamp.
+    ///
+    /// # Arguments
+    /// * `hash` - A reference to the `PixelHash` identifying the image file.
+    ///
+    /// # Returns
+    /// * `Ok(ImageMetadata)` - An `ImageMetadata` struct containing the extracted
+    ///   metadata if the file is found and successfully read.
+    /// * `Err(StorageError)` - If the file is not found, the file format is
+    ///   unsupported, or any I/O or image processing error occurs.
+    ///
+    /// # Errors
+    /// - `StorageError::FileNotFound` if no file is located for the given hash.
+    /// - `StorageError::UnsupportedFile` if the file format cannot be determined.
+    /// - `StorageError::Io` for any I/O-related errors.
+    /// - `StorageError::Image` for any image decoding errors.
     pub fn get_metadata(&self, hash: &PixelHash) -> Result<ImageMetadata, StorageError> {
         let file_path = self
             .find_entry(hash)
@@ -201,6 +222,25 @@ impl Storage {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// Contains metadata about an image stored within the storage system.
+///
+/// The `ImageMetadata` struct provides detailed information about an image
+/// file that has been stored, including its dimensions, format, color type,
+/// file size, and the filesystem-based creation timestamp. This metadata is
+/// useful for analyzing, displaying, or processing image files based on their
+/// characteristics. Having structured metadata aids in efficient storage
+/// management and retrieval operations.
+///
+/// Fields:
+/// - `width`: The width of the image in pixels.
+/// - `height`: The height of the image in pixels.
+/// - `format`: A string representing the file format of the image (e.g., "png").
+/// - `color_type`: A string describing the color type or model the image uses
+///   (e.g., RGB, Grayscale).
+/// - `file_size`: The size of the image file in bytes.
+/// - `created_at`: An optional timestamp representing when the file was
+///   originally created on the filesystem. It may be `None` if the timestamp
+///   is unavailable or unsupported on the platform.
 pub struct ImageMetadata {
     pub width: u32,
     pub height: u32,
@@ -216,16 +256,19 @@ pub struct ImageMetadata {
 #[derive(Debug)]
 pub enum StorageError {
     /// Same pixel hash already exists.
-    HashCollision {
-        existing_path: PathBuf,
-    },
+    HashCollision { existing_path: PathBuf },
     /// File format could not be determined or is unsupported.
-    UnsupportedFile {
-        kind: Option<infer::Type>,
-    },
-    FileNotFound {
-        hash: PixelHash,
-    },
+    UnsupportedFile { kind: Option<infer::Type> },
+    /// Represents an error when a file is not found in the storage system.
+    ///
+    /// This variant is used to indicate that a file corresponding to a specific
+    /// pixel hash does not exist within the storage module. It typically occurs
+    /// when attempting to retrieve or manipulate a file that has not been stored
+    /// or has already been deleted.
+    ///
+    /// Fields:
+    /// - `hash`: The `PixelHash` of the requested file that could not be located.
+    FileNotFound { hash: PixelHash },
     /// Filesystem IO error.
     Io(std::io::Error),
     /// Image decoding or saving error.
@@ -283,17 +326,54 @@ impl Error for StorageError {}
 pub struct PixelHash([u8; 8]);
 
 impl PixelHash {
+    /// Converts the `PixelHash` to a hexadecimal string representation.
+    ///
+    /// This function takes the `PixelHash` instance and produces a string
+    /// containing the hexadecimal representation of the hash. This can be useful
+    /// for display purposes or for serializing the `PixelHash`.
+    ///
+    /// # Returns
+    /// A `String` containing the hexadecimal digits corresponding to the bytes
+    /// of the `PixelHash`.
     pub fn to_string(self) -> String {
         self.into()
     }
 
     #[allow(overflowing_literals)]
+    /// Converts the `PixelHash` into a signed 64-bit integer.
+    ///
+    /// This function takes the `PixelHash` instance and interprets it as
+    /// an unsigned 64-bit integer, then converts it to a signed 64-bit
+    /// integer using a bitwise XOR with a fixed value. This transformation
+    /// ensures that the conversion covers the full range of a signed
+    /// 64-bit integer and can be used for comparison and sorting operations.
+    ///
+    /// # Returns
+    /// An `i64` value which represents the signed integer interpretation
+    /// of the `PixelHash`.
     pub fn to_signed(self) -> i64 {
         let v: u64 = self.into();
         (v as i64) ^ 0x8000_0000_0000_0000
     }
 
     #[allow(overflowing_literals)]
+    /// Converts a signed 64-bit integer back into a `PixelHash`.
+    ///
+    /// This function interprets the signed integer as a transformed pixel hash,
+    /// reversing the transformation done by `to_signed`. The conversion back to
+    /// a `PixelHash` is achieved by applying a bitwise XOR with a fixed value,
+    /// effectively reversing the previous transformation.
+    ///
+    /// This method is useful for reconstructing a `PixelHash` from a signed
+    /// integer representation, especially in contexts where `PixelHash` values
+    /// are stored or sorted as signed integers.
+    ///
+    /// # Arguments
+    /// * `v` - An `i64` that represents the signed integer interpretation of a
+    ///   pixel hash.
+    ///
+    /// # Returns
+    /// A `PixelHash` constructed from the provided signed integer.
     pub fn from_signed(v: i64) -> Self {
         Self::from((v as u64) ^ 0x8000_0000_0000_0000)
     }
