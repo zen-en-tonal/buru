@@ -1,3 +1,52 @@
+//! # Query Parser Module
+//!
+//! This module is responsible for parsing and interpreting query strings into
+//! logical expressions that can be evaluated or converted into SQL statements.
+//! It provides basic parsing capabilities for boolean logic, including support
+//! for `AND`, `OR`, and `NOT` operations, as well as parsing for date expressions
+//! and tags.
+//!
+//! ## Supported Expressions
+//!
+//! The parser recognizes the following expression types:
+//! - **OR Expression**: Multiple `AND` expressions separated by the `OR` keyword.
+//! - **AND Expression**: Multiple `NOT` expressions separated by the `AND` keyword.
+//! - **NOT Expression**: An optional negation, followed by a primary expression.
+//! - **Primary Expression**: Can be a date expression, a tag, or a nested query expression.
+//!
+//! ## Components
+//!
+//! - `parse_query`: Function that accepts a string input and returns a parsed `ImageQueryExpr`
+//!   or an error, which can be further processed or translated to other formats like SQL.
+//!
+//! - Internal helper functions like `query_expr`, `or_expr`, `and_expr`, and `not_expr`
+//!   manage the parsing of different parts of the query string.
+//!
+//! - Error handling structures (`ParseErrorKind` and `ParseErrorDetail`) that specify
+//!   the kind and location of parsing errors.
+//!
+//! ## Example Usage
+//!
+//! ```rust
+//! # use buru::parser::parse_query;
+//! # use chrono::DateTime;
+//! # use std::str::FromStr;
+//! # use buru::query::ImageQueryExpr;
+//! let input = "cat AND (cute OR NOT dog) AND date >= 2025-05-02T01:18:49.678809123Z";
+//! assert_eq!(
+//!     ImageQueryExpr::tag("cat")
+//!         .and(
+//!             ImageQueryExpr::tag("cute").or(ImageQueryExpr::not(ImageQueryExpr::tag("dog")))
+//!         )
+//!         .and(ImageQueryExpr::date_since(
+//!             DateTime::from_str("2025-05-02T01:18:49.678809123Z").unwrap()
+//!         )),
+//!     parse_query(input).unwrap()
+//! );
+//! ```
+//!
+//! This example demonstrates parsing a complex logical query string into an `ImageQueryExpr`.
+
 use crate::query::ImageQueryExpr;
 use chrono::DateTime;
 use nom::{

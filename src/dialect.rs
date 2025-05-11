@@ -1,3 +1,25 @@
+//! # SQL Dialect Module
+//!
+//! This module defines the `Dialect` trait, which abstracts over the differences in
+//! SQL syntax and behavior across various database systems. The `Dialect` trait
+//! provides methods for generating database-specific SQL statements and queries
+//! to ensure compatibility with the target database, such as SQLite, PostgreSQL, or MySQL.
+//!
+//! The module includes a compile-time determination of the current SQL dialect used,
+//! driven by feature flags. When the `sqlite` feature is enabled, the `CurrentDialect`
+//! type alias is set to `sqlite::SqliteDialect`.
+//!
+//! ## Key Components
+//! - **`Dialect` Trait**: Outlines methods for generating SQL statements and queries
+//!   that are dialect-specific. This includes handling placeholders, conditional logic
+//!   for inserts, and more.
+//! - **`CurrentDialect` Alias**: Represents the SQL dialect used based on current feature flags,
+//!   allowing higher-level code to interact with the database through a common interface.
+//!
+//! The goal of this module is to allow higher-level application logic to remain agnostic
+//! to the underlying SQL dialect, making it simpler to add support for additional
+//! databases in the future.
+
 #[cfg(feature = "sqlite")]
 mod sqlite;
 

@@ -1,3 +1,41 @@
+//! # Image Archival System Module
+//!
+//! This module provides a high-level interface for managing image archival operations
+//! including uploading, storing, tagging, and associating metadata and source URLs
+//! within a robust asynchronous framework. It defines core structures and functions
+//! necessary for handling the entire lifecycle of images within a scalable system.
+//!
+//! ## Provided Structures
+//!
+//! - **ArchiveImageCommand**: Central to creating and executing image archival requests,
+//!   this struct facilitates the inclusion of tags and source information while managing
+//!   the invocation of storage and database procedures.
+//! - **Image**: Represents a comprehensive image model that bundles file path, hash,
+//!   metadata, tags, and optional source information, capturing all details needed
+//!   for managing and retrieving images.
+//!
+//! ## Core Asynchronous Functions
+//!
+//! - **execute**: Archives an image by storing it, extracting metadata, and updating
+//!   the database with associated tags and source URLs if provided.
+//! - **attach_tags**: Synchronizes and updates tag associations for a given image hash,
+//!   efficiently calculating differences and applying updates in parallel.
+//! - **attach_source**: Updates source information for an image in the database,
+//!   ensuring accurate attribution of origin points for stored images.
+//! - **remove_image**: Completely deletes an image from both storage and database,
+//!   handling cleanup of records and metadata to maintain consistency.
+//! - **find_image_by_hash**: Retrieves a full image model by its hash, consolidating
+//!   metadata, tags, and file path, encapsulating all necessary image information.
+//!
+//! - **query_image** and **count_image**: Execute filtered queries on images, efficiently
+//!   retrieving or counting matches based on conditions defined by `ImageQuery` objects.
+//!
+//! ## Error Handling
+//!
+//! Defines a robust error system with `AppError` enum, encapsulating storage, database,
+//! and other custom errors to promote clear and manageable error management
+//! throughout image operations.
+
 use crate::{
     database::{Database, DatabaseError},
     query::{ImageQuery, TagQuery},

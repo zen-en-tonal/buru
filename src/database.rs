@@ -1,3 +1,28 @@
+//! Database abstraction for image and tag management.
+//!
+//! This module provides structures and functions to facilitate
+//! image and tag storage and retrieval within the system.
+//! It provides:
+//!
+//! - `Database`: A struct representing the database, implementing high-level
+//!   operations like ensuring image existence, associating metadata, tags,
+//!   and sources, as well as querying and modifying these associations.
+//! - `DatabaseError`: An error type that captures errors during
+//!   database operations with context to identify the failed operation.
+//! - Support for SQLx, particularly with SQLite for executing migrations and
+//!   querying the database.
+//!
+//! The implementation is designed to be SQL dialect agnostic and
+//! leverages the `Dialect` trait, which encapsulates database-specific
+//! query syntax.
+//!
+//! ## Usage
+//!
+//! To use this module, instantiate a `Database` with a pool, often created
+//! from a configuration. Use either the provided high-level methods to
+//! store, query, or manipulate image-related data or build custom queries
+//! leveraging the provided infrastructure and error handling.
+
 use crate::{
     dialect::{CurrentDialect, Dialect},
     query::{ImageQuery, TagQuery},

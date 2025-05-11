@@ -1,7 +1,17 @@
 //! Storage module to manage file storage based on pixel hashes.
 //!
-//! Files are stored under a directory tree derived from the pixel hash.
-//! Duplicate visual content (regardless of file format) is detected and rejected.
+//! This module provides a storage mechanism for image files, utilizing a pixel-based
+//! hash to detect and prevent duplicate visual content storage, regardless of
+//! file format differences.
+//!
+//! The storage system organizes files under a directory tree structure that is
+//! derived from the computed pixel hash, improving file system indexing and retrieval.
+//! Various errors related to file handling, hash computation, and image processing
+//! are managed via the `StorageError` enum, aiding in detailed error reporting.
+//!
+//! The module includes operations for storing images, managing duplicate detection,
+//! retrieving file metadata, and ensuring files are correctly indexed or deleted
+//! from the storage system.
 
 pub use chrono::{DateTime, Utc};
 use glob::glob;
@@ -268,7 +278,7 @@ impl Display for StorageError {
 /// Enables StorageError to be used as a standard error type.
 impl Error for StorageError {}
 
-/// Represents a 16-byte MD5 hash.
+/// Represents a 8-byte hash.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct PixelHash([u8; 8]);
 
