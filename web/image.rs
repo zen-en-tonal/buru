@@ -175,9 +175,9 @@ struct Variants {
     preview: Variant,
 }
 
-impl Into<Vec<Variant>> for Variants {
-    fn into(self) -> Vec<Variant> {
-        vec![self.preview, self.large, self.orig]
+impl From<Variants> for Vec<Variant> {
+    fn from(val: Variants) -> Self {
+        vec![val.preview, val.large, val.orig]
     }
 }
 

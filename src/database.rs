@@ -409,7 +409,7 @@ impl Database {
 
         let count = self
             .retry(|| async {
-                let q = sqlx::query_scalar(&stmt).bind(tag);
+                let q = sqlx::query_scalar(stmt).bind(tag);
 
                 q.fetch_optional(&self.pool)
                     .await
@@ -429,7 +429,7 @@ impl Database {
         let stmt = CurrentDialect::refresh_tag_counts_statement();
 
         self.retry(|| async {
-            let q = sqlx::query(&stmt);
+            let q = sqlx::query(stmt);
 
             q.execute(&self.pool)
                 .await

@@ -48,7 +48,7 @@ impl TagResponse {
             created_at: Utc::now().to_rfc3339(),
             updated_at: Utc::now().to_rfc3339(),
             is_deprecated: false,
-            words: value.split("_").into_iter().map(String::from).collect(),
+            words: value.split("_").map(String::from).collect(),
         }
     }
 }
@@ -61,7 +61,7 @@ pub async fn get_tags(
         .tags
         .unwrap_or_default()
         .split(",")
-        .filter(|e| *e != "")
+        .filter(|e| !e.is_empty())
         .map(String::from)
         .collect::<Vec<_>>();
 

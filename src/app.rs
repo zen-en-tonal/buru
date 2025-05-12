@@ -170,15 +170,15 @@ pub async fn attach_tags(
         return Err(AppError::StorageNotFound { hash: hash.clone() });
     }
 
-    let desired: HashSet<&str> = tags.into_iter().copied().collect();
+    let desired: HashSet<&str> = tags.iter().copied().collect();
     let current = db.get_tags(hash).await?;
     let current: HashSet<&str> = current.iter().map(|f| f.as_str()).collect();
 
-    let to_add: Vec<&str> = desired.difference(&current).into_iter().copied().collect();
-    let to_remove: Vec<&str> = current.difference(&desired).into_iter().copied().collect();
+    let to_add: Vec<&str> = desired.difference(&current).copied().collect();
+    let to_remove: Vec<&str> = current.difference(&desired).copied().collect();
 
-    db.ensure_image_has_tags(&hash, to_add.as_slice()).await?;
-    db.ensure_tags_removed(&hash, to_remove.as_slice()).await?;
+    db.ensure_image_has_tags(hash, to_add.as_slice()).await?;
+    db.ensure_tags_removed(hash, to_remove.as_slice()).await?;
 
     Ok(())
 }
@@ -253,17 +253,17 @@ pub async fn find_image_by_hash(
     hash: &PixelHash,
 ) -> Result<Image, AppError> {
     let path = storage
-        .index_file(&hash)
+        .index_file(hash)
         .ok_or_else(|| AppError::StorageNotFound { hash: hash.clone() })?;
 
-    let tags = db.get_tags(&hash).await?;
+    let tags = db.get_tags(hash).await?;
 
     let metadata = db
-        .get_metadata(&hash)
+        .get_metadata(hash)
         .await?
         .expect("Failed to get metadata");
 
-    let source = db.get_source(&hash).await?;
+    let source = db.get_source(hash).await?;
 
     Ok(Image {
         path,
