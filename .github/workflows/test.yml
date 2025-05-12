@@ -3,7 +3,7 @@ name: Test Rust Crate
 on:
   push:
     branches:
-      - '**'
+      - 'main'
   pull_request:
 
 jobs:
