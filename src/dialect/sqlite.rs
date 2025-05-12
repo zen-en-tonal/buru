@@ -108,6 +108,11 @@ impl Dialect for SqliteDialect {
             r#"CREATE VIEW IF NOT EXISTS image_with_metadata
                 AS SELECT * FROM images
                 LEFT JOIN image_metadatas ON images.hash = image_metadatas.image_hash;"#,
+            r#"CREATE TABLE IF NOT EXISTS tag_counts (
+                tag_name TEXT PRIMARY KEY,
+                count INTEGER NOT NULL,
+                FOREIGN KEY (tag_name) REFERENCES tags(name) ON DELETE CASCADE
+            );"#,
         ]
     }
 
@@ -117,5 +122,16 @@ impl Dialect for SqliteDialect {
 
     fn count_image_statement(condition: String) -> String {
         format!("SELECT COUNT(hash) FROM image_with_metadata {}", condition)
+    }
+
+    fn count_image_by_tag_statement() -> &'static str {
+        "SELECT count FROM tag_counts WHERE tag_name = ?"
+    }
+
+    fn refresh_tag_counts_statement() -> &'static str {
+        r#"BEGIN TRANSACTION;
+        DELETE FROM tag_counts;
+        INSERT INTO tag_counts SELECT tag_name, COUNT(*) FROM image_tags GROUP BY tag_name;
+        COMMIT;"#
     }
 }

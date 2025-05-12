@@ -8,9 +8,9 @@ use axum::{
     response::IntoResponse,
 };
 use buru::{
-    app::{AppError, count_image, query_tags},
+    app::{AppError, count_image_by_tag, query_tags},
     database::Database,
-    query::{self, ImageQuery, ImageQueryKind, TagQueryExpr, TagQueryKind},
+    query::{self, TagQueryExpr, TagQueryKind},
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -115,7 +115,7 @@ async fn tag_counts(db: &Database, tags: &[&str]) -> Result<HashMap<String, u64>
         let db = db.clone();
         let tag = tag.to_string();
         set.spawn(async move {
-            let count = post_count(&db, &tag).await?;
+            let count = count_image_by_tag(&db, &tag).await?;
             Ok::<(String, u64), TagError>((tag, count))
         });
     }
@@ -140,7 +140,7 @@ impl SuggestTagResponse {
             tag_type: "tag-word".to_string(),
             label: tag.replace("_", " "),
             value: tag.to_string(),
-            category: 1,
+            category: 0,
             post_count: count,
         }
     }
@@ -170,12 +170,10 @@ pub async fn suggest_tags(
     Ok(Json(resp))
 }
 
-async fn post_count(db: &Database, tag: &str) -> Result<u64, TagError> {
-    let query = ImageQuery::new(ImageQueryKind::Where(query::ImageQueryExpr::tag(
-        tag.to_string(),
-    )));
+pub async fn refresh_count(State(app): State<AppState>) -> Result<StatusCode, TagError> {
+    buru::app::refresh_count(&app.db).await?;
 
-    Ok(count_image(db, query).await?)
+    Ok(StatusCode::OK)
 }
 
 pub enum TagError {

@@ -100,6 +100,14 @@ pub trait Dialect {
     /// - `condition`: The SQL fragment for filtering images.
     fn count_image_statement(condition: String) -> String;
 
+    /// Returns the SQL statement to count images that match the given condition.
+    ///
+    /// # Parameters
+    /// - `condition`: The SQL fragment for filtering images.
+    fn count_image_by_tag_statement() -> &'static str;
+
+    fn refresh_tag_counts_statement() -> &'static str;
+
     /// Returns the SQL statement to query tags based on a condition.
     ///
     /// # Parameters

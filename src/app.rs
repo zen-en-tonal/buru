@@ -334,6 +334,14 @@ pub async fn count_image(db: &Database, query: ImageQuery) -> Result<u64, AppErr
     Ok(db.count_image(query).await?)
 }
 
+pub async fn count_image_by_tag(db: &Database, tag: &str) -> Result<u64, AppError> {
+    Ok(db.count_image_by_tag(tag).await?)
+}
+
+pub async fn refresh_count(db: &Database) -> Result<(), AppError> {
+    Ok(db.refresh_image_count().await?)
+}
+
 /// Executes a tag query against the database and returns matching tag names.
 ///
 /// # Arguments
