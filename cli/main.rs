@@ -4,8 +4,8 @@ use sqlx::Pool;
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "mybooru")]
-#[command(about = "Danbooru-compatible image archive CLI", long_about = None)]
+#[command(name = "buru")]
+#[command(about = "Image archive CLI", long_about = None)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
