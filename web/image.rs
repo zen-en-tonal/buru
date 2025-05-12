@@ -7,11 +7,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use buru::{
-    app::{AppError, ArchiveImageCommand, Image, attach_tags, find_image_by_hash, query_image},
-    query::{self, ImageQueryExpr, ImageQueryKind},
-    storage::PixelHash,
-};
+use buru::prelude::*;
 use bytes::BytesMut;
 use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
@@ -255,7 +251,7 @@ pub async fn get_images(
         .map(String::from)
         .collect::<Vec<_>>();
 
-    let query = query::ImageQuery::new(
+    let query = buru::query::ImageQuery::new(
         tags.into_iter()
             .map(ImageQueryExpr::Tag)
             .reduce(ImageQueryExpr::and)
@@ -372,22 +368,22 @@ impl IntoResponse for ImageError {
         let (status, message) = match self {
             ImageError::App(app_error) => match app_error {
                 AppError::Storage(storage_error) => match storage_error {
-                    buru::storage::StorageError::HashCollision { existing_path } => (
-                        StatusCode::CONFLICT,
+                    StorageError::HashCollision { existing_path } => (
+                        StatusCode::BAD_REQUEST,
                         existing_path.to_string_lossy().to_string(),
                     ),
-                    buru::storage::StorageError::UnsupportedFile { kind } => (
+                    StorageError::UnsupportedFile { kind } => (
                         StatusCode::BAD_REQUEST,
                         kind.map(|k| k.mime_type().to_string())
                             .unwrap_or("unknown".to_string()),
                     ),
-                    buru::storage::StorageError::FileNotFound { hash } => {
+                    StorageError::FileNotFound { hash } => {
                         (StatusCode::NOT_FOUND, hash.to_string())
                     }
-                    buru::storage::StorageError::Io(error) => {
+                    StorageError::Io(error) => {
                         (StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
                     }
-                    buru::storage::StorageError::Image(image_error) => {
+                    StorageError::Image(image_error) => {
                         (StatusCode::INTERNAL_SERVER_ERROR, image_error.to_string())
                     }
                 },

@@ -22,9 +22,7 @@
 //! provided in the tests to illustrate how to create, tag, source, and execute an `ArchiveImageCommand`.
 //!
 //! ```no_run
-//! use buru::app::ArchiveImageCommand;
-//! use buru::storage::Storage;
-//! use buru::database::Database;
+//! use buru::prelude::*;
 //!
 //! async fn perform_archival(storage: &Storage, db: &Database, bytes: &[u8]) {
 //!     let command = ArchiveImageCommand::new(bytes)
@@ -48,3 +46,12 @@ mod dialect;
 pub mod parser;
 pub mod query;
 pub mod storage;
+
+pub mod prelude {
+    use crate::{app, database, query, storage};
+
+    pub use app::*;
+    pub use database::*;
+    pub use query::*;
+    pub use storage::*;
+}

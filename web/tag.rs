@@ -7,12 +7,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use buru::{
-    app::{AppError, count_image_by_tag, query_tags},
-    database::Database,
-    query::{self, TagQueryExpr, TagQueryKind},
-};
-use chrono::Utc;
+use buru::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::hash::Hasher;
 use twox_hash::XxHash64;
@@ -70,7 +65,7 @@ pub async fn get_tags(
         .map(String::from)
         .collect::<Vec<_>>();
 
-    let query = query::TagQuery::new(
+    let query = buru::query::TagQuery::new(
         tags.into_iter()
             .map(TagQueryExpr::Exact)
             .reduce(TagQueryExpr::or)
@@ -150,7 +145,7 @@ pub async fn suggest_tags(
     State(app): State<AppState>,
     Query(params): Query<SuggestTagQuery>,
 ) -> Result<Json<Vec<SuggestTagResponse>>, TagError> {
-    let query = query::TagQuery::new(
+    let query = buru::query::TagQuery::new(
         params
             .looking_for
             .map(TagQueryExpr::Prefix)
@@ -197,22 +192,22 @@ impl IntoResponse for TagError {
         let (status, message) = match self {
             TagError::App(app_error) => match app_error {
                 AppError::Storage(storage_error) => match storage_error {
-                    buru::storage::StorageError::HashCollision { existing_path } => (
-                        StatusCode::CONFLICT,
+                    StorageError::HashCollision { existing_path } => (
+                        StatusCode::BAD_REQUEST,
                         existing_path.to_string_lossy().to_string(),
                     ),
-                    buru::storage::StorageError::UnsupportedFile { kind } => (
+                    StorageError::UnsupportedFile { kind } => (
                         StatusCode::BAD_REQUEST,
                         kind.map(|k| k.mime_type().to_string())
                             .unwrap_or("unknown".to_string()),
                     ),
-                    buru::storage::StorageError::FileNotFound { hash } => {
+                    StorageError::FileNotFound { hash } => {
                         (StatusCode::NOT_FOUND, hash.to_string())
                     }
-                    buru::storage::StorageError::Io(error) => {
+                    StorageError::Io(error) => {
                         (StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
                     }
-                    buru::storage::StorageError::Image(image_error) => {
+                    StorageError::Image(image_error) => {
                         (StatusCode::INTERNAL_SERVER_ERROR, image_error.to_string())
                     }
                 },
