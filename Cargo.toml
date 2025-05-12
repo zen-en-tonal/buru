@@ -1,7 +1,17 @@
 [package]
 name = "buru"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
+authors = ["Takeru KODAMA <zen.en.tonal@gmail.com>"]
+description = "A Rust application with both CLI and Web interface for data/image processing"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/zen-en-tonal/buru"
+homepage = "https://github.com/zen-en-tonal/buru"
+documentation = "https://docs.rs/buru"
+readme = "README.md"
+keywords = ["cli", "web", "rust", "axum", "image"]
+categories = ["command-line-utilities", "web-programming"]
+exclude = [".github/", "Dockerfile", "docker-compose.yml"]
 
 [dependencies]
 chrono = "0.4.41"
