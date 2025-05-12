@@ -411,8 +411,9 @@ impl Database {
             .retry(|| async {
                 let q = sqlx::query_scalar(&stmt).bind(tag);
 
-                q.fetch_one(&self.pool)
+                q.fetch_optional(&self.pool)
                     .await
+                    .map(|r| r.unwrap_or_default())
                     .map_err(|e| DatabaseError::QueryFailed {
                         operation: DbOperation::QueryImages,
                         sql: stmt.to_string(),
