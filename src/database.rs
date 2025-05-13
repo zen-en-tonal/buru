@@ -404,6 +404,22 @@ impl Database {
         Ok(count)
     }
 
+    /// Counts the number of images associated with a given tag.
+    ///
+    /// This method queries the database to find how many images are related
+    /// to the specified tag. It provides a simple way to retrieve statistics
+    /// about image-tag associations within the database.
+    ///
+    /// # Arguments
+    ///
+    /// * `tag` - A string slice that holds the tag for which the image count
+    ///           is to be determined.
+    ///
+    /// # Returns
+    ///
+    /// This function returns a `Result` containing a `u64` representing the
+    /// count of images associated with the given tag. If an error occurs
+    /// during the query execution, the `Result` will contain a `DatabaseError`.
     pub async fn count_image_by_tag(&self, tag: &str) -> Result<u64, DatabaseError> {
         let stmt = CurrentDialect::count_image_by_tag_statement();
 
@@ -425,6 +441,19 @@ impl Database {
         Ok(count)
     }
 
+    /// Refreshes the count of images associated with each tag in the database.
+    ///
+    /// This method recalculates the number of images associated with each tag and updates
+    /// the database to reflect the current counts. It's useful for maintaining accurate statistics
+    /// on image-tag associations after operations that change these relationships, such as adding
+    /// or removing tags from images.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` indicating success or failure of the operation.
+    ///
+    /// On success, it returns `Ok(())`. On failure, it returns a `DatabaseError` with context
+    /// about the failed operation.
     pub async fn refresh_image_count(&self) -> Result<(), DatabaseError> {
         let stmt = CurrentDialect::refresh_tag_counts_statement();
 

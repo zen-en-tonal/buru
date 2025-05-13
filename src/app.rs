@@ -334,10 +334,40 @@ pub async fn count_image(db: &Database, query: ImageQuery) -> Result<u64, AppErr
     Ok(db.count_image(query).await?)
 }
 
+/// Counts the number of images that are associated with a specific tag.
+///
+/// This function executes a counting operation in the database to determine the quantity
+/// of images that have been tagged with a given tag name. It provides a convenient way
+/// to assess the prevalence of a specific tag within the image dataset.
+///
+/// # Arguments
+///
+/// * `db` - Reference to the database within which the counting operation will be performed.
+/// * `tag` - A string slice representing the tag name for which the image count is desired.
+///
+/// # Returns
+///
+/// Returns a `Result` containing either the count of images with the specified tag as an `u64`
+/// or an `AppError` if an error occurs during the counting process.
 pub async fn count_image_by_tag(db: &Database, tag: &str) -> Result<u64, AppError> {
     Ok(db.count_image_by_tag(tag).await?)
 }
 
+/// Refreshes the image count in the database.
+///
+/// This function triggers a recalculation of the total number
+/// of images stored in the database. It ensures that the image
+/// count reflects the current state of image records, including
+/// any recent additions or deletions. Executing this function
+/// helps maintain accurate statistics about the image collection.
+///
+/// # Arguments
+///
+/// * `db` - Reference to the database where the image count should be refreshed.
+///
+/// # Returns
+///
+/// Returns a `Result` indicating success or an `AppError` if an error occurs during the count refresh process.
 pub async fn refresh_count(db: &Database) -> Result<(), AppError> {
     Ok(db.refresh_image_count().await?)
 }
