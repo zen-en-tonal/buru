@@ -15,15 +15,18 @@
 
 pub use chrono::{DateTime, Utc};
 use glob::glob;
-use image::{DynamicImage, GenericImageView, ImageFormat, ImageReader};
+use image::{DynamicImage, GenericImageView, ImageBuffer, ImageFormat, ImageReader};
 use std::hash::Hasher;
+use std::ops::Div;
 use std::{
-    error::Error,
     fmt::Display,
     fs::{self},
     path::PathBuf,
 };
+use tempfile::NamedTempFile;
+use thiserror::Error;
 use twox_hash::XxHash64;
+use video_rs::{Decoder, Frame};
 
 #[derive(Debug, Clone)]
 pub struct Storage {
@@ -69,21 +72,18 @@ impl Storage {
     /// println!("File stored with pixel hash: {:?}", hash);
     /// ```
     pub fn create_file(&self, bytes: &[u8]) -> Result<PixelHash, StorageError> {
-        // Since `DynamicImage` does not expose the format it was decoded from,
-        // we independently guess the file format here based on the byte content.
-        // If the format cannot be reliably guessed, the file is considered suspicious
-        // and the process is aborted early.
-        let kind = infer::get(bytes).ok_or(StorageError::UnsupportedFile { kind: None })?;
-
-        // Decode the byte array into a DynamicImage for further pixel processing.
-        let img = ImageReader::new(std::io::Cursor::new(bytes))
-            .with_guessed_format()?
-            .decode()?;
+        let media = Media::new(bytes)?;
 
         // Compute an MD5 hash based on the image pixel data (RGBA).
         // This ensures that the file is uniquely identified by its visual content,
         // not its encoding or metadata differences.
-        let pixel_hash = compute_pixel_hash(&img);
+        let pixel_hash = match media {
+            Media::Video { ref thumbnail, .. } => compute_pixel_hash(thumbnail),
+            Media::Image {
+                content: ref reader,
+                ..
+            } => compute_pixel_hash(reader),
+        };
 
         // Based on the hash value, create a nested directory structure to improve file system indexing.
         // Example path: `/root_dir/12/34/1234567890abcdef1234567890abcdef.png`
@@ -94,17 +94,34 @@ impl Storage {
         // return a collision error to prevent overwriting visually identical content.
         if let Some(entry) = self.find_entry(&pixel_hash) {
             return Err(StorageError::HashCollision {
-                existing_path: entry,
+                existing_path: entry.content_path().to_owned(),
             });
         }
 
         // Compose the filename as `{pixel_hash}.{extension}`,
         // and save the image using the guessed file format.
-        let filename = self.derive_filename(&pixel_hash, kind.extension());
-        let filepath = dir_path.join(filename);
-        let format = ImageFormat::from_extension(kind.extension())
-            .ok_or(StorageError::UnsupportedFile { kind: Some(kind) })?;
-        img.save_with_format(filepath, format)?;
+        match media {
+            Media::Video {
+                raw,
+                thumbnail,
+                kind,
+            } => {
+                let thumb_filename = self.derive_filename(&pixel_hash, "png");
+                let thumb_filepath = dir_path.join(thumb_filename);
+                thumbnail.save_with_format(thumb_filepath, ImageFormat::Png)?;
+
+                let video_filename = self.derive_filename(&pixel_hash, kind.extension());
+                let video_filepath = dir_path.join(video_filename);
+                fs::write(video_filepath, raw)?;
+            }
+            Media::Image { content, kind } => {
+                let filename = self.derive_filename(&pixel_hash, kind.extension());
+                let filepath = dir_path.join(filename);
+                let format = ImageFormat::from_extension(kind.extension())
+                    .ok_or(StorageError::UnsupportedFile { kind: Some(kind) })?;
+                content.save_with_format(filepath, format)?;
+            }
+        }
 
         Ok(pixel_hash)
     }
@@ -117,10 +134,20 @@ impl Storage {
     /// # Returns
     /// * `Some(relative_path)` if the file exists.
     /// * `None` if no matching file is found.
-    pub fn index_file(&self, hash: &PixelHash) -> Option<PathBuf> {
-        self.find_entry(hash).map(|p| {
-            self.derive_dir(hash)
-                .join(p.file_name().expect("Failed to get file name"))
+    pub fn index_file(&self, hash: &PixelHash) -> Option<MediaPath> {
+        self.find_entry(hash).map(|p| match p {
+            MediaPath::Image(path_buf) => MediaPath::Image(
+                self.derive_dir(hash)
+                    .join(path_buf.file_name().expect("Failed to get file name")),
+            ),
+            MediaPath::Video { video, thumb } => MediaPath::Video {
+                video: self
+                    .derive_dir(hash)
+                    .join(video.file_name().expect("Failed to get file name")),
+                thumb: self
+                    .derive_dir(hash)
+                    .join(thumb.file_name().expect("Failed to get file name")),
+            },
         })
     }
 
@@ -137,7 +164,13 @@ impl Storage {
     /// * `Err(StorageError::FilesystemError)` if an unexpected I/O error occurs.
     pub fn ensure_deleted(&self, hash: &PixelHash) -> Result<(), StorageError> {
         if let Some(path) = self.find_entry(hash) {
-            fs::remove_file(path)?;
+            match path {
+                MediaPath::Image(path_buf) => fs::remove_file(path_buf)?,
+                MediaPath::Video { video, thumb } => {
+                    fs::remove_file(video)?;
+                    fs::remove_file(thumb)?;
+                }
+            }
         }
         Ok(())
     }
@@ -164,25 +197,33 @@ impl Storage {
     /// - `StorageError::Io` for any I/O-related errors.
     /// - `StorageError::Image` for any image decoding errors.
     pub fn get_metadata(&self, hash: &PixelHash) -> Result<ImageMetadata, StorageError> {
-        let file_path = self
+        let entry = self
             .find_entry(hash)
             .ok_or(StorageError::FileNotFound { hash: hash.clone() })?;
+        let file_path = match &entry {
+            MediaPath::Image(path_buf) => path_buf,
+            MediaPath::Video { thumb, .. } => thumb,
+        };
 
-        let bytes = std::fs::read(&file_path)?;
-        let format = infer::get(&bytes).ok_or(StorageError::UnsupportedFile { kind: None })?;
+        let bytes = std::fs::read(file_path)?;
+        let extension = match &entry {
+            MediaPath::Image(path_buf) => path_buf.extension(),
+            MediaPath::Video { video, .. } => video.extension(),
+        }
+        .expect("filepath must have a extention");
 
         let img = image::load_from_memory(&bytes)?;
         let (width, height) = img.dimensions();
         let color_type = format!("{:?}", img.color());
 
-        let metadata = std::fs::metadata(&file_path)?;
+        let metadata = std::fs::metadata(file_path)?;
         let created_at = metadata.created().map(DateTime::from).ok();
         let file_size = metadata.len();
 
         Ok(ImageMetadata {
             width,
             height,
-            format: format.extension().to_string(),
+            format: extension.to_string_lossy().to_string(),
             color_type,
             file_size,
             created_at,
@@ -208,15 +249,37 @@ impl Storage {
     }
 
     /// Searches for a file matching the hash (with any extension).
-    fn find_entry(&self, hash: &PixelHash) -> Option<PathBuf> {
+    fn find_entry(&self, hash: &PixelHash) -> Option<MediaPath> {
         let dir = self.derive_abs_dir(hash);
         let filename: String = hash.clone().into();
 
         let glob_pattern = format!("{}.*", dir.join(filename).to_string_lossy());
 
-        for entry in glob(&glob_pattern).expect("Failed to read glob pattern") {
-            return Some(entry.expect("Failed to read entry"));
+        let entries: Vec<_> = glob(&glob_pattern)
+            .expect("Failed to read glob pattern")
+            .filter_map(Result::ok)
+            .collect();
+        let mut entries = entries.into_iter();
+
+        if entries.len() == 1 {
+            return Some(MediaPath::Image(entries.next().unwrap()));
         }
+
+        if entries.len() == 2 {
+            let maybe_video = entries.next().unwrap();
+            if maybe_video.extension().and_then(|e| e.to_str()).unwrap() == ".png" {
+                return Some(MediaPath::Video {
+                    video: entries.next().unwrap(),
+                    thumb: maybe_video,
+                });
+            } else {
+                return Some(MediaPath::Video {
+                    video: maybe_video,
+                    thumb: entries.next().unwrap(),
+                });
+            }
+        }
+
         None
     }
 }
@@ -253,92 +316,32 @@ pub struct ImageMetadata {
 }
 
 /// Errors that can occur during storage operations.
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum StorageError {
-    /// Same pixel hash already exists.
+    #[error("Same pixel hash already exists at path: {existing_path}")]
     HashCollision { existing_path: PathBuf },
-    /// File format could not be determined or is unsupported.
+
+    #[error("Unsupported or undetectable file format: {kind:?}")]
     UnsupportedFile { kind: Option<infer::Type> },
-    /// Represents an error when a file is not found in the storage system.
-    ///
-    /// This variant is used to indicate that a file corresponding to a specific
-    /// pixel hash does not exist within the storage module. It typically occurs
-    /// when attempting to retrieve or manipulate a file that has not been stored
-    /// or has already been deleted.
-    ///
-    /// Fields:
-    /// - `hash`: The `PixelHash` of the requested file that could not be located.
+
+    #[error("File with pixel hash {hash:?} not found in storage.")]
     FileNotFound { hash: PixelHash },
-    /// Filesystem IO error.
-    Io(std::io::Error),
-    /// Image decoding or saving error.
-    Image(image::ImageError),
-}
 
-/// Allows automatic conversion from std::io::Error.
-impl From<std::io::Error> for StorageError {
-    fn from(value: std::io::Error) -> Self {
-        StorageError::Io(value)
-    }
-}
+    #[error("Filesystem I/O error: {0}")]
+    Io(#[from] std::io::Error),
 
-/// Allows automatic conversion from image::ImageError.
-impl From<image::ImageError> for StorageError {
-    fn from(value: image::ImageError) -> Self {
-        StorageError::Image(value)
-    }
-}
+    #[error("Image processing error: {0}")]
+    Image(#[from] image::ImageError),
 
-/// Formats StorageError for display.
-impl Display for StorageError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            StorageError::HashCollision { existing_path } => {
-                write!(
-                    f,
-                    "Hash collision detected. Existing file at: {}",
-                    existing_path.display()
-                )
-            }
-            StorageError::UnsupportedFile { kind } => {
-                if let Some(mime) = kind {
-                    write!(f, "Unsupported file format: {}", mime)
-                } else {
-                    write!(f, "Unsupported or unrecognized file format.")
-                }
-            }
-            StorageError::Io(inner) => {
-                write!(f, "Filesystem error: {}", inner)
-            }
-            StorageError::Image(inner) => {
-                write!(f, "Image error: {}", inner)
-            }
-            StorageError::FileNotFound { hash } => write!(f, "File not found: {}", hash),
-        }
-    }
+    #[error("Video processing error: {0}")]
+    Video(#[from] video_rs::Error),
 }
-
-/// Enables StorageError to be used as a standard error type.
-impl Error for StorageError {}
 
 /// Represents a 8-byte hash.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct PixelHash([u8; 8]);
 
 impl PixelHash {
-    /// Converts the `PixelHash` to a hexadecimal string representation.
-    ///
-    /// This function takes the `PixelHash` instance and produces a string
-    /// containing the hexadecimal representation of the hash. This can be useful
-    /// for display purposes or for serializing the `PixelHash`.
-    ///
-    /// # Returns
-    /// A `String` containing the hexadecimal digits corresponding to the bytes
-    /// of the `PixelHash`.
-    pub fn to_string(self) -> String {
-        self.into()
-    }
-
     #[allow(overflowing_literals)]
     /// Converts the `PixelHash` into a signed 64-bit integer.
     ///
@@ -381,7 +384,13 @@ impl PixelHash {
 
 impl Display for PixelHash {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.clone().to_string())
+        write!(
+            f,
+            "{}",
+            self.0
+                .iter()
+                .fold("".to_string(), |acc, x| format!("{}{:02x}", acc, x))
+        )
     }
 }
 
@@ -412,26 +421,14 @@ impl TryFrom<String> for PixelHash {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Error)]
 pub enum PixelHashParseError {
+    #[error("hash must be exactly 16 hexadecimal characters.")]
     InvalidLength,
+
+    #[error("hash contains invalid hexadecimal characters.")]
     InvalidHex,
 }
-
-impl Display for PixelHashParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PixelHashParseError::InvalidLength => {
-                write!(f, "MD5 hash must be exactly 32 hexadecimal characters.")
-            }
-            PixelHashParseError::InvalidHex => {
-                write!(f, "MD5 hash contains invalid hexadecimal characters.")
-            }
-        }
-    }
-}
-
-impl Error for PixelHashParseError {}
 
 /// Converts an Md5Hash into a hex string.
 impl From<PixelHash> for String {
@@ -467,11 +464,98 @@ fn compute_pixel_hash(img: &DynamicImage) -> PixelHash {
     PixelHash::from(hasher.finish())
 }
 
+enum Media {
+    Video {
+        raw: Vec<u8>,
+        thumbnail: DynamicImage,
+        kind: infer::Type,
+    },
+    Image {
+        content: DynamicImage,
+        kind: infer::Type,
+    },
+}
+
+impl Media {
+    pub fn new(bytes: &[u8]) -> Result<Self, StorageError> {
+        let kind = infer::get(bytes).ok_or(StorageError::UnsupportedFile { kind: None })?;
+
+        let media = match kind.matcher_type() {
+            infer::MatcherType::Image => Media::Image {
+                content: ImageReader::new(std::io::Cursor::new(bytes.to_vec()))
+                    .with_guessed_format()?
+                    .decode()?,
+                kind,
+            },
+            infer::MatcherType::Video => Media::Video {
+                raw: bytes.to_vec(),
+                thumbnail: generate_thumbnail(bytes)?,
+                kind,
+            },
+            _ => return Err(StorageError::UnsupportedFile { kind: Some(kind) }),
+        };
+
+        Ok(media)
+    }
+}
+
+fn generate_thumbnail(bytes: &[u8]) -> Result<DynamicImage, StorageError> {
+    let tmpfile = NamedTempFile::new()?;
+
+    fs::write(tmpfile.path(), bytes)?;
+    tmpfile.as_file().sync_all()?;
+
+    let decoder = Decoder::new(tmpfile.path())?;
+    let (width, height) = decoder.size();
+    let target: i64 = decoder.frames()?.div(2) as i64;
+
+    let frame = safe_seek_and_decode(decoder, target)?;
+
+    let buf = frame.as_slice().expect("");
+
+    let img: ImageBuffer<image::Rgb<u8>, Vec<u8>> =
+        ImageBuffer::from_raw(width, height, buf.to_vec()).unwrap();
+
+    Ok(DynamicImage::ImageRgb8(img))
+}
+
+fn safe_seek_and_decode(mut decoder: Decoder, frame_index: i64) -> Result<Frame, StorageError> {
+    decoder.seek_to_start()?;
+    match decoder.seek_to_frame(frame_index) {
+        Ok(_) => Ok(decoder.decode()?.1),
+        Err(_) => {
+            decoder.seek_to_start()?;
+            // fallback: skip until frame_index by decode().
+            for _ in 0..frame_index {
+                decoder.decode()?; // skip
+            }
+            Ok(decoder.decode()?.1)
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum MediaPath {
+    Image(PathBuf),
+    Video { video: PathBuf, thumb: PathBuf },
+}
+
+impl MediaPath {
+    pub fn content_path(&self) -> &PathBuf {
+        match self {
+            MediaPath::Image(path_buf) => path_buf,
+            MediaPath::Video { video, .. } => video,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::storage::{PixelHash, PixelHashParseError, Storage, StorageError};
+    use crate::storage::{MediaPath, PixelHash, PixelHashParseError, Storage, StorageError};
     use std::{fs, i64, path::PathBuf};
     use tempfile::TempDir;
+
+    use super::generate_thumbnail;
 
     #[test]
     fn test_md5_parse() {
@@ -560,19 +644,32 @@ mod tests {
         let tmp_dir = TempDir::new().unwrap();
         let storage = Storage::new(tmp_dir.path().to_path_buf());
 
-        let file_bytes = include_bytes!("../testdata/44a5b6f94f4f6445.png");
-        let expect_path = PathBuf::from("44/a5/44a5b6f94f4f6445.png");
+        let image_bytes = include_bytes!("../testdata/44a5b6f94f4f6445.png");
+        let image_expect_path = MediaPath::Image(PathBuf::from("44/a5/44a5b6f94f4f6445.png"));
 
-        storage.create_file(file_bytes).unwrap();
+        storage.create_file(image_bytes).unwrap();
 
         assert_eq!(
-            Some(expect_path),
+            Some(image_expect_path),
             storage.index_file(&PixelHash::try_from("44a5b6f94f4f6445".to_string()).unwrap())
         );
 
         assert_eq!(
             None,
             storage.index_file(&PixelHash::try_from("00a5b6f94f4f6445".to_string()).unwrap())
+        );
+
+        let video_bytes = include_bytes!("../testdata/motion_video.mp4");
+        let video_expect_path = MediaPath::Video {
+            video: PathBuf::from("06/a5/06a5e19afdf4c2e3.mp4"),
+            thumb: PathBuf::from("06/a5/06a5e19afdf4c2e3.png"),
+        };
+
+        storage.create_file(video_bytes).unwrap();
+
+        assert_eq!(
+            Some(video_expect_path),
+            storage.index_file(&PixelHash::try_from("06a5e19afdf4c2e3".to_string()).unwrap())
         );
     }
 
@@ -612,5 +709,12 @@ mod tests {
         let hash = storage.create_file(file_bytes).unwrap();
 
         println!("{:?}", storage.get_metadata(&hash));
+    }
+
+    #[test]
+    fn test_thumbnail() {
+        let file_bytes = include_bytes!("../testdata/motion_video.mp4");
+
+        generate_thumbnail(file_bytes).unwrap();
     }
 }

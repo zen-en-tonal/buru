@@ -173,7 +173,6 @@ pub async fn refresh_count(State(app): State<AppState>) -> Result<StatusCode, Ta
 
 pub enum TagError {
     App(AppError),
-    // BadRequest(String),
 }
 
 impl From<AppError> for TagError {
@@ -204,17 +203,17 @@ impl IntoResponse for TagError {
                     StorageError::FileNotFound { hash } => {
                         (StatusCode::NOT_FOUND, hash.to_string())
                     }
-                    StorageError::Io(error) => {
-                        (StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
-                    }
+                    StorageError::Io(error) => (StatusCode::SERVICE_UNAVAILABLE, error.to_string()),
                     StorageError::Image(image_error) => {
-                        (StatusCode::INTERNAL_SERVER_ERROR, image_error.to_string())
+                        (StatusCode::UNPROCESSABLE_ENTITY, image_error.to_string())
+                    }
+                    StorageError::Video(error) => {
+                        (StatusCode::UNPROCESSABLE_ENTITY, error.to_string())
                     }
                 },
-                AppError::Database(database_error) => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    database_error.to_string(),
-                ),
+                AppError::Database(database_error) => {
+                    (StatusCode::SERVICE_UNAVAILABLE, database_error.to_string())
+                }
                 AppError::StorageNotFound { hash } => (StatusCode::NOT_FOUND, hash.to_string()),
             },
         };

@@ -86,7 +86,7 @@ pub struct MediaAsset {
 }
 
 impl MediaAsset {
-    fn from_image(image: &Image, variants: &Variants) -> Self {
+    fn from_image(image: &Media, variants: &Variants) -> Self {
         let created_at = image
             .metadata
             .created_at
@@ -123,19 +123,31 @@ pub struct Variant {
     pub file_ext: String,
 }
 
-fn generate_variants(config: &AppConfig, org: &Image) -> Variants {
+fn generate_variants(config: &AppConfig, org: &Media) -> Variants {
+    let (original_path, preview_path) = match org.path {
+        MediaPath::Image(ref path_buf) => (path_buf, path_buf),
+        MediaPath::Video {
+            ref video,
+            ref thumb,
+        } => (video, thumb),
+    };
+
     Variants {
         preview: Variant {
             variant_type: "180x180".to_string(),
             url: config
                 .cdn_base_url
                 .join(PathBuf::from("180x180"))
-                .join(org.path.clone())
+                .join(preview_path)
                 .to_string_lossy()
                 .to_string(),
             width: 180,
             height: 180,
-            file_ext: org.metadata.format.clone(),
+            file_ext: preview_path
+                .extension()
+                .unwrap()
+                .to_string_lossy()
+                .to_string(),
         },
         large: Variant {
             variant_type: "sample".to_string(),
@@ -146,24 +158,32 @@ fn generate_variants(config: &AppConfig, org: &Image) -> Variants {
                     org.metadata.width / 2,
                     org.metadata.height / 2
                 ))
-                .join(org.path.clone())
+                .join(preview_path)
                 .to_string_lossy()
                 .to_string(),
             width: org.metadata.width / 2,
             height: org.metadata.height / 2,
-            file_ext: org.metadata.format.clone(),
+            file_ext: preview_path
+                .extension()
+                .unwrap()
+                .to_string_lossy()
+                .to_string(),
         },
         orig: Variant {
             variant_type: "original".to_string(),
             url: config
                 .cdn_base_url
                 .join("original")
-                .join(org.path.clone())
+                .join(original_path)
                 .to_string_lossy()
                 .to_string(),
             width: org.metadata.width,
             height: org.metadata.height,
-            file_ext: org.metadata.format.clone(),
+            file_ext: original_path
+                .extension()
+                .unwrap()
+                .to_string_lossy()
+                .to_string(),
         },
     }
 }
@@ -182,7 +202,7 @@ impl From<Variants> for Vec<Variant> {
 }
 
 impl ImageResponse {
-    fn from_image(config: AppConfig, value: Image) -> Self {
+    fn from_image(config: AppConfig, value: Media) -> Self {
         let created_at = value
             .metadata
             .created_at
@@ -380,17 +400,17 @@ impl IntoResponse for ImageError {
                     StorageError::FileNotFound { hash } => {
                         (StatusCode::NOT_FOUND, hash.to_string())
                     }
-                    StorageError::Io(error) => {
-                        (StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
-                    }
+                    StorageError::Io(error) => (StatusCode::SERVICE_UNAVAILABLE, error.to_string()),
                     StorageError::Image(image_error) => {
-                        (StatusCode::INTERNAL_SERVER_ERROR, image_error.to_string())
+                        (StatusCode::UNPROCESSABLE_ENTITY, image_error.to_string())
+                    }
+                    StorageError::Video(error) => {
+                        (StatusCode::UNPROCESSABLE_ENTITY, error.to_string())
                     }
                 },
-                AppError::Database(database_error) => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    database_error.to_string(),
-                ),
+                AppError::Database(database_error) => {
+                    (StatusCode::SERVICE_UNAVAILABLE, database_error.to_string())
+                }
                 AppError::StorageNotFound { hash } => (StatusCode::NOT_FOUND, hash.to_string()),
             },
             ImageError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
