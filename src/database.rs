@@ -140,7 +140,7 @@ impl Database {
         let stmt = CurrentDialect::ensure_image_statement();
 
         self.retry(|| async {
-            let query = sqlx::query(stmt).bind(hash.clone().to_string());
+            let query = sqlx::query(&stmt).bind(hash.clone().to_string());
             let sql = query.sql();
             query
                 .execute(&self.pool)
@@ -173,8 +173,10 @@ impl Database {
     ) -> Result<(), DatabaseError> {
         self.ensure_image(hash).await?;
 
+        let stmt = CurrentDialect::ensure_metadata_statement();
+
         self.retry(|| async {
-            let query = sqlx::query(CurrentDialect::ensure_metadata_statement())
+            let query = sqlx::query(&stmt)
                 .bind(hash.clone().to_string())
                 .bind(metadata.width as i64)
                 .bind(metadata.height as i64)
@@ -219,7 +221,7 @@ impl Database {
                 .map_err(|e| DatabaseError::TransactionFailed { source: e })?;
 
             for tag in tags.iter() {
-                let query = sqlx::query(stmt).bind(tag);
+                let query = sqlx::query(&stmt).bind(tag);
                 let sql = query.sql();
                 query
                     .execute(&mut *tx)
@@ -269,7 +271,7 @@ impl Database {
                 .map_err(|e| DatabaseError::TransactionFailed { source: e })?;
 
             for tag in tags.iter() {
-                let query = sqlx::query(stmt).bind(hash.to_string()).bind(tag);
+                let query = sqlx::query(&stmt).bind(hash.to_string()).bind(tag);
                 let sql = query.sql();
                 query
                     .execute(&mut *tx)
@@ -310,8 +312,10 @@ impl Database {
     ) -> Result<(), DatabaseError> {
         self.ensure_image(hash).await?;
 
+        let stmt = CurrentDialect::update_source_statement();
+
         self.retry(|| async {
-            let query = sqlx::query(CurrentDialect::update_source_statement())
+            let query = sqlx::query(&stmt)
                 .bind(source)
                 .bind(hash.clone().to_string());
             let sql = query.sql();
@@ -425,7 +429,7 @@ impl Database {
 
         let count = self
             .retry(|| async {
-                let q = sqlx::query_scalar(stmt).bind(tag);
+                let q = sqlx::query_scalar(&stmt).bind(tag);
 
                 q.fetch_optional(&self.pool)
                     .await
@@ -523,7 +527,7 @@ impl Database {
 
         let rows = self
             .retry(|| async {
-                sqlx::query_scalar(stmt)
+                sqlx::query_scalar(&stmt)
                     .bind(hash.clone().to_string())
                     .fetch_all(&self.pool)
                     .await
@@ -556,7 +560,7 @@ impl Database {
 
         let metadata: Option<ImageMetadata> = self
             .retry(|| async {
-                sqlx::query_as(stmt)
+                sqlx::query_as(&stmt)
                     .bind(hash.clone().to_string())
                     .fetch_optional(&self.pool)
                     .await
@@ -582,10 +586,11 @@ impl Database {
     /// A `Result` containing an `Option` of the source string.
     /// The `Option` will be `None` if the source is not found.
     pub async fn get_source(&self, hash: &PixelHash) -> Result<Option<String>, DatabaseError> {
+        let stmt = CurrentDialect::query_source_statement();
+
         let soruce: Option<String> = self
             .retry(|| async {
-                let query = sqlx::query_scalar(CurrentDialect::query_source_statement())
-                    .bind(hash.clone().to_string());
+                let query = sqlx::query_scalar(&stmt).bind(hash.clone().to_string());
                 let sql = query.sql();
 
                 query
@@ -627,7 +632,7 @@ impl Database {
                 .map_err(|e| DatabaseError::TransactionFailed { source: e })?;
 
             for tag in tags.iter() {
-                let query = sqlx::query(stmt).bind(hash.to_string()).bind(tag);
+                let query = sqlx::query(&stmt).bind(hash.to_string()).bind(tag);
                 let sql = query.sql();
                 query
                     .execute(&mut *tx)
@@ -677,7 +682,7 @@ impl Database {
                 .await
                 .map_err(|e| DatabaseError::TransactionFailed { source: e })?;
 
-            sqlx::query(stmt_tags)
+            sqlx::query(&stmt_tags)
                 .bind(hash.clone().to_string())
                 .execute(&mut *tx)
                 .await
@@ -687,7 +692,7 @@ impl Database {
                     source: e,
                 })?;
 
-            sqlx::query(stmt_image)
+            sqlx::query(&stmt_image)
                 .bind(hash.clone().to_string())
                 .execute(&mut *tx)
                 .await
