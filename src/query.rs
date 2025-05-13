@@ -26,10 +26,9 @@
 //! Creating an image query to retrieve images associated with specific tags and ordered by creation date:
 //! ```rust
 //! # use buru::query::ImageQuery;
-//! # use buru::query::ImageQueryKind;
-//! # use buru::query::ImageQueryExpr;
+//! # use buru::query::image::tag;
 //! # use buru::query::OrderBy;
-//! let query = ImageQuery::new(ImageQueryKind::Where(ImageQueryExpr::tag("nature")))
+//! let query = ImageQuery::filter(tag("nature"))
 //!     .with_limit(10)
 //!     .with_offset(0)
 //!     .with_order(OrderBy::CreatedAtAsc);
@@ -47,7 +46,7 @@
 //! let (sql, params) = query.to_sql();
 //! ```
 
-mod image;
+pub mod image;
 mod tag;
 
 pub use image::{ImageQuery, ImageQueryExpr, ImageQueryKind, OrderBy};

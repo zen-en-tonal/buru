@@ -29,19 +29,13 @@
 //!
 //! ```rust
 //! # use buru::parser::parse_query;
-//! # use chrono::DateTime;
-//! # use std::str::FromStr;
-//! # use buru::query::ImageQueryExpr;
-//! let input = "cat AND (cute OR NOT dog) AND date >= 2025-05-02T01:18:49.678809123Z";
+//! # use buru::query::image;
+//! let input = "cat AND (cute OR NOT dog) AND date >= 2024-12-01T00:00:00Z";
 //! assert_eq!(
-//!     ImageQueryExpr::tag("cat")
-//!         .and(
-//!             ImageQueryExpr::tag("cute").or(ImageQueryExpr::not(ImageQueryExpr::tag("dog")))
-//!         )
-//!         .and(ImageQueryExpr::date_since(
-//!             DateTime::from_str("2025-05-02T01:18:49.678809123Z").unwrap()
-//!         )),
-//!     parse_query(input).unwrap()
+//!    image::tag("cat")
+//!        .and(image::tag("cute").or_not(image::tag("dog")))
+//!        .and(image::date_since("2024-12-01T00:00:00Z")),
+//!    parse_query(input).unwrap()
 //! );
 //! ```
 //!
@@ -190,22 +184,17 @@ impl nom::error::ParseError<&str> for ParseErrorDetail {
 
 #[cfg(test)]
 mod tests {
-    use crate::{parser::parse_query, query::ImageQueryExpr};
-    use chrono::DateTime;
-    use std::str::FromStr;
+    use crate::parser::parse_query;
+    use crate::query::image;
 
     #[test]
     fn test_parse_query_expr() {
-        let input = "cat AND (cute OR NOT dog) AND date >= 2025-05-02T01:18:49.678809123Z";
+        let input = "cat AND (cute OR NOT dog) AND date >= 2024-12-01T00:00:00Z";
 
         assert_eq!(
-            ImageQueryExpr::tag("cat")
-                .and(
-                    ImageQueryExpr::tag("cute").or(ImageQueryExpr::not(ImageQueryExpr::tag("dog")))
-                )
-                .and(ImageQueryExpr::date_since(
-                    DateTime::from_str("2025-05-02T01:18:49.678809123Z").unwrap()
-                )),
+            image::tag("cat")
+                .and(image::tag("cute").or_not(image::tag("dog")))
+                .and(image::date_since("2024-12-01T00:00:00Z")),
             parse_query(input).unwrap()
         );
     }

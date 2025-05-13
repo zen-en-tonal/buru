@@ -42,8 +42,19 @@ impl ImageQueryExpr {
     ///
     /// # Returns
     /// - `ImageQueryExpr` - A new expression representing the logical AND.
-    pub fn and(self, other: ImageQueryExpr) -> Self {
-        ImageQueryExpr::And(Box::new(self), Box::new(other))
+    pub fn and(self, other: impl Into<ImageQueryExpr>) -> Self {
+        ImageQueryExpr::And(Box::new(self), Box::new(other.into()))
+    }
+
+    /// Combines the current expression with the negation of another expression using a logical AND.
+    ///
+    /// # Arguments
+    /// - `other` - The expression to be negated and combined with the current expression using a logical AND.
+    ///
+    /// # Returns
+    /// - `ImageQueryExpr` - A new expression representing the logical AND with a negated expression.
+    pub fn and_not(self, other: impl Into<ImageQueryExpr>) -> Self {
+        ImageQueryExpr::And(Box::new(self), Box::new(ImageQueryExpr::not(other.into())))
     }
 
     /// Combines two expressions with a logical OR.
@@ -53,8 +64,19 @@ impl ImageQueryExpr {
     ///
     /// # Returns
     /// - `ImageQueryExpr` - A new expression representing the logical OR.
-    pub fn or(self, other: ImageQueryExpr) -> Self {
-        ImageQueryExpr::Or(Box::new(self), Box::new(other))
+    pub fn or(self, other: impl Into<ImageQueryExpr>) -> Self {
+        ImageQueryExpr::Or(Box::new(self), Box::new(other.into()))
+    }
+
+    /// Combines the current expression with the negation of another expression using a logical OR.
+    ///
+    /// # Arguments
+    /// - `other` - The expression to be negated and combined with the current expression using a logical OR.
+    ///
+    /// # Returns
+    /// - `ImageQueryExpr` - A new expression representing the logical OR with a negated expression.
+    pub fn or_not(self, other: impl Into<ImageQueryExpr>) -> Self {
+        ImageQueryExpr::Or(Box::new(self), Box::new(ImageQueryExpr::not(other.into())))
     }
 
     /// Negates a query expression.
@@ -64,8 +86,8 @@ impl ImageQueryExpr {
     ///
     /// # Returns
     /// - `ImageQueryExpr` - A new expression representing the negation.
-    pub fn not(expr: ImageQueryExpr) -> Self {
-        ImageQueryExpr::Not(Box::new(expr))
+    pub fn not(expr: impl Into<ImageQueryExpr>) -> Self {
+        ImageQueryExpr::Not(Box::new(expr.into()))
     }
 
     /// Creates an expression to filter results until a specific date.
@@ -75,8 +97,12 @@ impl ImageQueryExpr {
     ///
     /// # Returns
     /// - `ImageQueryExpr` - A new expression with the date condition.
-    pub fn date_until(date: DateTime<Utc>) -> Self {
-        ImageQueryExpr::DateUntil(date)
+    pub fn date_until(date: impl AsRef<str>) -> Self {
+        ImageQueryExpr::DateUntil(
+            DateTime::parse_from_rfc3339(date.as_ref())
+                .unwrap()
+                .with_timezone(&Utc),
+        )
     }
 
     /// Creates an expression to filter results since a specific date.
@@ -86,8 +112,12 @@ impl ImageQueryExpr {
     ///
     /// # Returns
     /// - `ImageQueryExpr` - A new expression with the date condition.
-    pub fn date_since(date: DateTime<Utc>) -> Self {
-        ImageQueryExpr::DateSince(date)
+    pub fn date_since(date: impl AsRef<str>) -> Self {
+        ImageQueryExpr::DateSince(
+            DateTime::parse_from_rfc3339(date.as_ref())
+                .unwrap()
+                .with_timezone(&Utc),
+        )
     }
 
     /// Converts the query expression into an SQL WHERE clause and its bound parameters.
@@ -125,6 +155,39 @@ impl ImageQueryExpr {
             }
         }
     }
+}
+
+/// Creates a query expression from a single tag.
+///
+/// # Arguments
+/// - `tag` - A tag to be used in the query as a condition.
+///
+/// # Returns
+/// - `ImageQueryExpr` - A query expression representing the tag condition.
+pub fn tag(tag: impl Into<String>) -> ImageQueryExpr {
+    ImageQueryExpr::tag(tag)
+}
+
+/// Creates an expression to filter results until a specific date.
+///
+/// # Arguments
+/// - `date` - A reference to a string that represents the date until which results should be filtered.
+///
+/// # Returns
+/// - `ImageQueryExpr` - A new expression representing the condition to filter results until the specified date.
+pub fn date_until(date: impl AsRef<str>) -> ImageQueryExpr {
+    ImageQueryExpr::date_until(date)
+}
+
+/// Creates an expression to filter results since a specific date.
+///
+/// # Arguments
+/// - `date` - A reference to a string that represents the date since which results should be filtered.
+///
+/// # Returns
+/// - `ImageQueryExpr` - A new expression representing the condition to filter results since the specified date.
+pub fn date_since(date: impl AsRef<str>) -> ImageQueryExpr {
+    ImageQueryExpr::date_since(date)
 }
 
 /// Represents the kind of the image query, which can either be a query for all images or a filtered query.
@@ -217,6 +280,25 @@ impl ImageQuery {
         }
     }
 
+    /// Creates a new filtered query based on the given expression.
+    ///
+    /// # Arguments
+    /// - `expr` - A logical expression to filter the query results.
+    ///
+    /// # Returns
+    /// - `Self`: A new `ImageQuery` instance initialized with the provided filter expression.
+    pub fn filter(expr: impl Into<ImageQueryExpr>) -> Self {
+        Self::new(ImageQueryKind::Where(expr.into()))
+    }
+
+    /// Creates a new query instance that retrieves all images without any filters.
+    ///
+    /// # Returns
+    /// - `Self`: A new `ImageQuery` instance configured to fetch all images.
+    pub fn all() -> Self {
+        Self::new(ImageQueryKind::All)
+    }
+
     /// Sets the `LIMIT` for this query.
     ///
     /// # Arguments
@@ -287,20 +369,16 @@ impl ImageQuery {
 
 #[cfg(test)]
 mod tests {
-    use super::{CurrentDialect, Dialect, ImageQuery, ImageQueryExpr, ImageQueryKind};
-    use chrono::DateTime;
-    use std::str::FromStr;
+    use super::{CurrentDialect, Dialect, ImageQuery, date_until, tag};
 
     #[test]
     fn test_build_query() {
-        let query = ImageQuery::new(ImageQueryKind::Where(
-            ImageQueryExpr::tag("cat")
-                .and(ImageQueryExpr::tag("cute"))
-                .or(ImageQueryExpr::not(ImageQueryExpr::tag("dog")))
-                .and(ImageQueryExpr::date_until(
-                    DateTime::from_str("2025-05-02T01:18:49.678809123+00:00").unwrap(),
-                )),
-        ))
+        let query = ImageQuery::filter(
+            tag("cat")
+                .and(tag("cute"))
+                .or_not(tag("dog"))
+                .and(date_until("2024-12-01T00:00:00Z")),
+        )
         .with_limit(10)
         .with_offset(20);
 
@@ -323,7 +401,7 @@ mod tests {
                 "cat",
                 "cute",
                 "dog",
-                "2025-05-02T01:18:49.678809123+00:00",
+                "2024-12-01T00:00:00+00:00",
                 "10",
                 "20",
             ],
