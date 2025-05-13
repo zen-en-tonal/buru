@@ -1,89 +1,95 @@
-# Image Archival System
+# buru
 
-This application is designed to manage image storage, metadata extraction, database integration, and tagging functionalities. The system provides an asynchronous command interface to efficiently archive images, allowing for the addition of tags and source URLs.
+[![docs.rs](https://docs.rs/buru/badge.svg)](https://docs.rs/buru)
+
+This project provides a comprehensive system for managing and archiving images, offering a robust CLI and a web interface to efficiently store images, extract metadata, and handle database interactions. The application is built in Rust and utilizes asynchronous processing to ensure high performance and scalability.
+
+## Overview
+
+The system consists of two main components:
+- **CLI Application**: Enables users to archive images via command line, adding metadata and tags.
+- **Web Interface**: Provides a RESTful API for interacting with the archival system programmatically.
 
 ## Features
 
-- **Image Storage**: Handles uploading and storing images using a scalable storage system.
-- **Metadata Extraction**: Automatically extracts metadata such as width, height, format, and color type.
-- **Database Integration**: Stores image data and metadata in a relational database using SQLite.
-- **Tagging System**: Allows for tagging of images to facilitate search and categorization.
-- **Source URL Handling**: Supports optional setting of a source URL for each image.
+- **Image Storage**: Efficiently handles image storage with metadata extraction and tagging capabilities.
+- **Database Integration**: Uses SQLite for storing image metadata, tags, and source information.
+- **Tagging System**: Supports tagging images to facilitate easy searching and categorization.
+- **Asynchronous Execution**: Leverages async features of Rust for non-blocking operations.
+- **Docker Support**: Containerization of the application with Docker for easy deployment.
 
 ## Setup
 
 ### Prerequisites
 
-- [Rust](https://www.rust-lang.org/tools/install)
-- [SQLite](https://www.sqlite.org/download.html)
+- [Rust](https://www.rust-lang.org/tools/install) for building the project.
+- [Docker](https://www.docker.com/get-started) for running the application in containers.
+- [SQLite](https://www.sqlite.org/download.html) database for metadata storage.
 
 ### Installation
 
-1. Clone the repository:
+1. **Clone the repository:**
 
    ```bash
    git clone <repository-url>
-   ```
-
-2. Navigate to the project directory:
-
-   ```bash
    cd image-archival-system
    ```
 
-3. Build the project:
+2. **Build the project:**
 
    ```bash
-   cargo build
+   cargo build --release
    ```
 
-### Configuration
+3. **Run the CLI or Web Server:**
 
-Ensure that your database is set up by running the necessary migrations:
+   - **CLI**: Execute image archival commands.
+     ```bash
+     cargo run --bin cli
+     ```
 
-```bash
-sqlite3 database.db < migrations.sql
-```
+   - **Web Server**: Start the RESTful API.
+     ```bash
+     cargo run --bin web
+     ```
 
-The migrations are defined in `src/dialect/sqlite.rs`.
+4. **Docker**: Optionally, build and run using Docker.
+
+   - Build Docker Image:
+
+     ```bash
+     docker-compose build
+     ```
+
+   - Run with Docker Compose:
+
+     ```bash
+     docker-compose up
+     ```
 
 ## Usage
 
-### Archiving an Image
+### CLI Application
 
-You can create an `ArchiveImageCommand` and execute it to store an image along with its metadata and tags:
+To archive an image using the CLI:
 
-```rust
-let image_bytes: &[u8] = //... get image bytes
-let tags = vec!["nature".to_string(), "sunset".to_string()];
-
-let command = ArchiveImageCommand::new(image_bytes)
-    .with_tags(tags)
-    .with_source("http://example.com");
-
-let storage = //... obtain storage reference
-let db = //... obtain database reference
-
-command.execute(storage, db).await?;
+```bash
+cargo run --bin cli -- archive --path /path/to/image.jpg --tags "nature sunset" --source "http://example.com/source"
 ```
 
-### Querying Images
+### Web Interface
 
-Use the `ImageQuery` system to retrieve images based on tags or other criteria:
+The web interface provides endpoints to archive images, retrieve metadata, and manage tags. Start the server and access the API documentation at `[localhost:3000]`.
 
-```rust
-let query = ImageQuery::new(ImageQueryExpr::tag("nature"))
-    .with_limit(10)
-    .with_offset(0);
+#### Example
 
-let (sql, params) = query.to_sql();
-// Execute the query using your database connection
-```
+- **GET /images**: Fetch all archived images.
+- **POST /images**: Upload and archive a new image.
 
-## Contributing
+### Docker Deployment
 
-Contributions are welcome! Please submit a pull request with a clear description of your changes.
+The application can be easily deployed using Docker. Use the provided `docker-compose.yml` to manage services. This setup includes both the application server and a reverse proxy using Nginx.
 
 ## License
 
-This project is licensed under the MIT License. See the `LICENSE` file for details.
+This project is licensed under the MIT License. See the `LICENSE` file for more details.
