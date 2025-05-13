@@ -210,6 +210,11 @@ impl ImageResponse {
             .unwrap_or_default();
         let variants = generate_variants(&config, &value);
         let asset = MediaAsset::from_image(&value, &variants);
+        let largefile_url = if value.metadata.duration.is_some() {
+            variants.orig.url.clone()
+        } else {
+            variants.large.url.clone()
+        };
 
         ImageResponse {
             id: value.hash.clone().to_signed(),
@@ -229,7 +234,7 @@ impl ImageResponse {
             pixiv_id: None,
             source: value.source.unwrap_or_default(),
             md5: Some(value.hash.to_string()),
-            large_file_url: Some(variants.large.url),
+            large_file_url: Some(largefile_url),
             preview_file_url: Some(variants.preview.url),
             file_ext: value.metadata.format,
             file_size: value.metadata.file_size as u32,
