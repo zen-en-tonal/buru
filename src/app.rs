@@ -39,12 +39,9 @@
 use crate::{
     database::{Database, DatabaseError},
     query::{ImageQuery, TagQuery},
-    storage::{ImageMetadata, PixelHash, Storage, StorageError},
+    storage::{ImageMetadata, MediaPath, PixelHash, Storage, StorageError},
 };
-use std::{
-    collections::{HashMap, HashSet},
-    path::PathBuf,
-};
+use std::collections::{HashMap, HashSet};
 use tokio::task::JoinSet;
 
 /// Represents a command for archiving an image into the system.
@@ -120,7 +117,7 @@ impl ArchiveImageCommand {
     /// # Returns
     ///
     /// Returns a `Result` containing the full `Image` model upon success or an `AppError` on failure.
-    pub async fn execute(self, storage: &Storage, db: &Database) -> Result<Image, AppError> {
+    pub async fn execute(self, storage: &Storage, db: &Database) -> Result<Media, AppError> {
         let hash = storage.create_file(&self.bytes)?;
         let metadata = storage.get_metadata(&hash)?;
 
@@ -251,7 +248,7 @@ pub async fn find_image_by_hash(
     db: &Database,
     storage: &Storage,
     hash: &PixelHash,
-) -> Result<Image, AppError> {
+) -> Result<Media, AppError> {
     let path = storage
         .index_file(hash)
         .ok_or_else(|| AppError::StorageNotFound { hash: hash.clone() })?;
@@ -265,7 +262,7 @@ pub async fn find_image_by_hash(
 
     let source = db.get_source(hash).await?;
 
-    Ok(Image {
+    Ok(Media {
         path,
         hash: hash.clone(),
         tags,
@@ -291,7 +288,7 @@ pub async fn query_image(
     db: &Database,
     storage: &Storage,
     query: ImageQuery,
-) -> Result<Vec<Image>, AppError> {
+) -> Result<Vec<Media>, AppError> {
     let hashes = db.query_image(query).await?;
 
     let mut set = JoinSet::new();
@@ -300,7 +297,7 @@ pub async fn query_image(
         let storage = storage.clone();
         set.spawn(async move {
             let image = find_image_by_hash(&db, &storage, &hash).await?;
-            Ok::<(PixelHash, Image), AppError>((hash, image))
+            Ok::<(PixelHash, Media), AppError>((hash, image))
         });
     }
 
@@ -391,9 +388,9 @@ pub async fn query_tags(db: &Database, query: TagQuery) -> Result<Vec<String>, A
 /// This structure holds the file path, hash, metadata, and other attributes required to fully
 /// describe an image within the system.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Image {
+pub struct Media {
     /// The file path where the image is stored.
-    pub path: PathBuf,
+    pub path: MediaPath,
     /// The unique hash representing the image.
     pub hash: PixelHash,
     /// Metadata associated with the image.

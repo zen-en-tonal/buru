@@ -210,6 +210,7 @@ impl IntoResponse for TagError {
                     StorageError::Image(image_error) => {
                         (StatusCode::INTERNAL_SERVER_ERROR, image_error.to_string())
                     }
+                    StorageError::Video(error) => todo!(),
                 },
                 AppError::Database(database_error) => (
                     StatusCode::INTERNAL_SERVER_ERROR,
