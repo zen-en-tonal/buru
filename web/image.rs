@@ -103,7 +103,7 @@ impl MediaAsset {
             file_size: image.metadata.file_size,
             image_width: image.metadata.width,
             image_height: image.metadata.height,
-            duration: None,
+            duration: image.metadata.duration,
             status: "active".to_string(),
             file_key: "bbD6k0WiU".to_string(),
             is_public: true,

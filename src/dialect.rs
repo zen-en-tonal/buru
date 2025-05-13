@@ -26,6 +26,13 @@ mod sqlite;
 /// The current SQL dialect used at compile time, determined by feature flags.
 #[cfg(feature = "sqlite")]
 pub type CurrentDialect = sqlite::SqliteDialect;
+
+#[cfg(feature = "sqlite")]
+pub type Db = sqlx::Sqlite;
+
+#[cfg(feature = "sqlite")]
+pub type CurrentRow = sqlx::sqlite::SqliteRow;
+
 /// A trait for SQL dialects to support database-specific query generation.
 ///
 /// This trait provides methods that return SQL strings compatible with the
@@ -102,8 +109,8 @@ pub trait Dialect {
     fn ensure_metadata_statement() -> String {
         format!(
             r#"INSERT OR IGNORE INTO image_metadatas
-            (image_hash, width, height, format, color_type, file_size, created_at)
-            VALUES ({}, {}, {}, {}, {}, {}, {})"#,
+            (image_hash, width, height, format, color_type, file_size, created_at, duration)
+            VALUES ({}, {}, {}, {}, {}, {}, {}, {})"#,
             Self::placeholder(1),
             Self::placeholder(2),
             Self::placeholder(3),
@@ -111,6 +118,7 @@ pub trait Dialect {
             Self::placeholder(5),
             Self::placeholder(6),
             Self::placeholder(7),
+            Self::placeholder(8)
         )
     }
 
@@ -238,5 +246,5 @@ pub trait Dialect {
     }
 
     /// Returns a list of SQL migration statements needed for setting up the database.
-    fn migration() -> Vec<&'static str>;
+    async fn migration(pool: &sqlx::Pool<Db>) -> Result<(), sqlx::Error>;
 }

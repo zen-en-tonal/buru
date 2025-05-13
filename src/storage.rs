@@ -220,6 +220,13 @@ impl Storage {
         let created_at = metadata.created().map(DateTime::from).ok();
         let file_size = metadata.len();
 
+        let duration = match &entry {
+            MediaPath::Image(_) => None,
+            MediaPath::Video { video, .. } => {
+                Some(Decoder::new(video.as_path())?.duration()?.as_secs_f64())
+            }
+        };
+
         Ok(ImageMetadata {
             width,
             height,
@@ -227,6 +234,7 @@ impl Storage {
             color_type,
             file_size,
             created_at,
+            duration,
         })
     }
 
@@ -313,6 +321,8 @@ pub struct ImageMetadata {
 
     /// Filesystem-based creation timestamp
     pub created_at: Option<DateTime<Utc>>,
+
+    pub duration: Option<f64>,
 }
 
 /// Errors that can occur during storage operations.
@@ -709,6 +719,18 @@ mod tests {
         let hash = storage.create_file(file_bytes).unwrap();
 
         println!("{:?}", storage.get_metadata(&hash));
+    }
+
+    #[test]
+    fn test_get_video_metadata() {
+        let tmp_dir = TempDir::new().unwrap();
+        let storage = Storage::new(tmp_dir.path().to_path_buf());
+
+        let video_bytes = include_bytes!("../testdata/motion_video.mp4");
+
+        let hash = storage.create_file(video_bytes).unwrap();
+
+        assert_eq!(Some(3.0), storage.get_metadata(&hash).unwrap().duration);
     }
 
     #[test]

@@ -24,7 +24,7 @@
 //! leveraging the provided infrastructure and error handling.
 
 use crate::{
-    dialect::{CurrentDialect, Dialect},
+    dialect::{CurrentDialect, CurrentRow, Db, Dialect},
     query::{ImageQuery, TagQuery},
     storage::{ImageMetadata, PixelHash},
 };
@@ -33,11 +33,6 @@ pub use sqlx::Pool;
 use sqlx::{Execute, FromRow, Row};
 use std::str::FromStr;
 use thiserror::Error;
-
-#[cfg(feature = "sqlite")]
-pub type Db = sqlx::Sqlite;
-
-type CurrentRow = sqlx::sqlite::SqliteRow;
 
 /// Run database migrations using the pool provided.
 ///
@@ -50,10 +45,7 @@ type CurrentRow = sqlx::sqlite::SqliteRow;
 /// This function returns a `Result` indicating success or failure during
 /// the migration process.
 pub async fn run_migration(pool: &sqlx::Pool<Db>) -> Result<(), sqlx::Error> {
-    for stmt in CurrentDialect::migration() {
-        sqlx::query(stmt).execute(pool).await?;
-    }
-    Ok(())
+    CurrentDialect::migration(pool).await
 }
 
 impl FromRow<'_, CurrentRow> for ImageMetadata {
@@ -65,6 +57,7 @@ impl FromRow<'_, CurrentRow> for ImageMetadata {
         let file_size: i64 = row.try_get("file_size")?;
         let created_at: String = row.try_get("created_at")?;
         let created_at = DateTime::from_str(&created_at).expect("");
+        let duration: Option<f64> = row.try_get("duration")?;
 
         Ok(ImageMetadata {
             width: width as u32,
@@ -73,6 +66,7 @@ impl FromRow<'_, CurrentRow> for ImageMetadata {
             color_type,
             file_size: file_size as u64,
             created_at: Some(created_at),
+            duration,
         })
     }
 }
@@ -183,7 +177,8 @@ impl Database {
                 .bind(&metadata.format)
                 .bind(&metadata.color_type)
                 .bind(metadata.file_size as i64)
-                .bind(metadata.created_at.unwrap_or(Utc::now()).to_rfc3339());
+                .bind(metadata.created_at.unwrap_or(Utc::now()).to_rfc3339())
+                .bind(metadata.duration);
             let sql = query.sql();
             query
                 .execute(&self.pool)
@@ -900,6 +895,7 @@ mod tests {
             color_type: "rgba".to_string(),
             file_size: 1337,
             created_at: Some(DateTime::from_str("2025-05-02T01:18:49.678809123Z").unwrap()),
+            duration: Some(1.0),
         };
         assert!(
             db.ensure_image_has_metadata(&image, &metadata)
@@ -911,6 +907,8 @@ mod tests {
                 .await
                 .is_ok()
         );
+
+        assert_eq!(Some(metadata), db.get_metadata(&image).await.unwrap());
     }
 
     /// Ensures that metadata can be inserted and retrieved correctly without a `created_at` value.
@@ -930,6 +928,7 @@ mod tests {
             color_type: "rgba".to_string(),
             file_size: 1337,
             created_at: None,
+            duration: None,
         };
         assert!(
             db.ensure_image_has_metadata(&image, &metadata)

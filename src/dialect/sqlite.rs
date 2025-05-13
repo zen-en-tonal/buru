@@ -1,4 +1,5 @@
-use super::Dialect;
+use super::{Db, Dialect};
+use sqlx::Row;
 
 /// SQLite dialect implementation of the `Dialect` trait.
 #[cfg(feature = "sqlite")]
@@ -10,8 +11,8 @@ impl Dialect for SqliteDialect {
         "?".to_string()
     }
 
-    fn migration() -> Vec<&'static str> {
-        vec![
+    async fn migration(pool: &sqlx::Pool<Db>) -> Result<(), sqlx::Error> {
+        let stmts = vec![
             r#"CREATE TABLE IF NOT EXISTS images (
                 hash TEXT PRIMARY KEY,
                 source TEXT
@@ -45,6 +46,33 @@ impl Dialect for SqliteDialect {
                 count INTEGER NOT NULL,
                 FOREIGN KEY (tag_name) REFERENCES tags(name) ON DELETE CASCADE
             );"#,
-        ]
+        ];
+
+        for stmt in stmts {
+            sqlx::query(stmt).execute(pool).await?;
+        }
+
+        maybe_add_duration_column(pool).await?;
+
+        Ok(())
     }
+}
+
+async fn maybe_add_duration_column(pool: &sqlx::Pool<Db>) -> Result<(), sqlx::Error> {
+    let rows = sqlx::query("PRAGMA table_info(image_metadatas);")
+        .fetch_all(pool)
+        .await?;
+
+    let has_duration = rows.iter().any(|row| {
+        let name: &str = row.get("name");
+        name == "duration"
+    });
+
+    if !has_duration {
+        sqlx::query("ALTER TABLE image_metadatas ADD COLUMN duration REAL;")
+            .execute(pool)
+            .await?;
+    }
+
+    Ok(())
 }
