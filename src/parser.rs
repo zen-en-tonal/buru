@@ -33,7 +33,7 @@
 //! let input = "cat AND (cute OR NOT dog) AND date >= 2024-12-01T00:00:00Z";
 //! assert_eq!(
 //!    image::tag("cat")
-//!        .and(image::tag("cute").or_not(image::tag("dog")))
+//!        .and(image::tag("cute").or(image::not(image::tag("dog"))))
 //!        .and(image::date_since("2024-12-01T00:00:00Z")),
 //!    parse_query(input).unwrap()
 //! );
@@ -193,7 +193,7 @@ mod tests {
 
         assert_eq!(
             image::tag("cat")
-                .and(image::tag("cute").or_not(image::tag("dog")))
+                .and(image::tag("cute").or(image::not(image::tag("dog"))))
                 .and(image::date_since("2024-12-01T00:00:00Z")),
             parse_query(input).unwrap()
         );

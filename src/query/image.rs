@@ -46,17 +46,6 @@ impl ImageQueryExpr {
         ImageQueryExpr::And(Box::new(self), Box::new(other.into()))
     }
 
-    /// Combines the current expression with the negation of another expression using a logical AND.
-    ///
-    /// # Arguments
-    /// - `other` - The expression to be negated and combined with the current expression using a logical AND.
-    ///
-    /// # Returns
-    /// - `ImageQueryExpr` - A new expression representing the logical AND with a negated expression.
-    pub fn and_not(self, other: impl Into<ImageQueryExpr>) -> Self {
-        ImageQueryExpr::And(Box::new(self), Box::new(ImageQueryExpr::not(other.into())))
-    }
-
     /// Combines two expressions with a logical OR.
     ///
     /// # Arguments
@@ -66,17 +55,6 @@ impl ImageQueryExpr {
     /// - `ImageQueryExpr` - A new expression representing the logical OR.
     pub fn or(self, other: impl Into<ImageQueryExpr>) -> Self {
         ImageQueryExpr::Or(Box::new(self), Box::new(other.into()))
-    }
-
-    /// Combines the current expression with the negation of another expression using a logical OR.
-    ///
-    /// # Arguments
-    /// - `other` - The expression to be negated and combined with the current expression using a logical OR.
-    ///
-    /// # Returns
-    /// - `ImageQueryExpr` - A new expression representing the logical OR with a negated expression.
-    pub fn or_not(self, other: impl Into<ImageQueryExpr>) -> Self {
-        ImageQueryExpr::Or(Box::new(self), Box::new(ImageQueryExpr::not(other.into())))
     }
 
     /// Negates a query expression.
@@ -188,6 +166,23 @@ pub fn date_until(date: impl AsRef<str>) -> ImageQueryExpr {
 /// - `ImageQueryExpr` - A new expression representing the condition to filter results since the specified date.
 pub fn date_since(date: impl AsRef<str>) -> ImageQueryExpr {
     ImageQueryExpr::date_since(date)
+}
+
+/// Negates a given query expression.
+///
+/// This function takes a query expression, negates it, and returns a new
+/// `ImageQueryExpr` representing the logical NOT of the original expression.
+/// It is useful for excluding certain conditions in queries.
+///
+/// # Arguments
+/// - `expr` - The expression to be negated. It can be any expression that
+///   implements `Into<ImageQueryExpr>`, allowing for flexible input types.
+///
+/// # Returns
+/// - `ImageQueryExpr` - A new expression representing the negation of the
+///   original input expression.
+pub fn not(expr: impl Into<ImageQueryExpr>) -> ImageQueryExpr {
+    ImageQueryExpr::not(expr.into())
 }
 
 /// Represents the kind of the image query, which can either be a query for all images or a filtered query.
@@ -369,14 +364,14 @@ impl ImageQuery {
 
 #[cfg(test)]
 mod tests {
-    use super::{CurrentDialect, Dialect, ImageQuery, date_until, tag};
+    use super::{CurrentDialect, Dialect, ImageQuery, date_until, not, tag};
 
     #[test]
     fn test_build_query() {
         let query = ImageQuery::filter(
             tag("cat")
                 .and(tag("cute"))
-                .or_not(tag("dog"))
+                .or(not(tag("dog")))
                 .and(date_until("2024-12-01T00:00:00Z")),
         )
         .with_limit(10)
