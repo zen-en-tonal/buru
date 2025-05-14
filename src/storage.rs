@@ -260,35 +260,28 @@ impl Storage {
     fn find_entry(&self, hash: &PixelHash) -> Option<MediaPath> {
         let dir = self.derive_abs_dir(hash);
         let filename: String = hash.clone().into();
-
         let glob_pattern = format!("{}.*", dir.join(filename).to_string_lossy());
 
-        let entries: Vec<_> = glob(&glob_pattern)
-            .expect("Failed to read glob pattern")
-            .filter_map(Result::ok)
-            .collect();
-        let mut entries = entries.into_iter();
+        let mut entries: Vec<_> = glob(&glob_pattern).ok()?.filter_map(Result::ok).collect();
 
-        if entries.len() == 1 {
-            return Some(MediaPath::Image(entries.next().unwrap()));
-        }
+        match entries.len() {
+            1 => entries.pop().map(MediaPath::Image),
+            2 => {
+                // .png とそうでない方を振り分ける
+                let (a, b) = (entries.pop()?, entries.pop()?);
+                let (video, thumb) = match (
+                    a.extension().and_then(|e| e.to_str()),
+                    b.extension().and_then(|e| e.to_str()),
+                ) {
+                    (Some("png"), _) => (b, a),
+                    (_, Some("png")) => (a, b),
+                    _ => return None,
+                };
 
-        if entries.len() == 2 {
-            let maybe_video = entries.next().unwrap();
-            if maybe_video.extension().and_then(|e| e.to_str()).unwrap() == ".png" {
-                return Some(MediaPath::Video {
-                    video: entries.next().unwrap(),
-                    thumb: maybe_video,
-                });
-            } else {
-                return Some(MediaPath::Video {
-                    video: maybe_video,
-                    thumb: entries.next().unwrap(),
-                });
+                Some(MediaPath::Video { video, thumb })
             }
+            _ => None,
         }
-
-        None
     }
 }
 
