@@ -277,10 +277,7 @@ pub async fn find_image_by_hash(
 
     let tags = db.get_tags(hash).await?;
 
-    let metadata = db
-        .get_metadata(hash)
-        .await?
-        .expect("Failed to get metadata");
+    let metadata = db.get_metadata(hash).await?.unwrap_or_default();
 
     let source = db.get_source(hash).await?;
 

@@ -285,7 +285,6 @@ impl Storage {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
 /// Contains metadata about an image stored within the storage system.
 ///
 /// The `ImageMetadata` struct provides detailed information about an image
@@ -305,6 +304,7 @@ impl Storage {
 /// - `created_at`: An optional timestamp representing when the file was
 ///   originally created on the filesystem. It may be `None` if the timestamp
 ///   is unavailable or unsupported on the platform.
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct ImageMetadata {
     pub width: u32,
     pub height: u32,
