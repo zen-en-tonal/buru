@@ -1,6 +1,6 @@
 [package]
 name = "buru"
-version = "0.3.3"
+version = "0.3.4"
 edition = "2024"
 authors = ["Takeru KODAMA <zen.en.tonal@gmail.com>"]
 description = "A Rust application with both CLI and Web interface for data/image processing"
