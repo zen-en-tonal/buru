@@ -186,7 +186,7 @@ pub fn not(expr: impl Into<ImageQueryExpr>) -> ImageQueryExpr {
 }
 
 /// Represents the kind of the image query, which can either be a query for all images or a filtered query.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ImageQueryKind {
     /// Represents a query that retrieves all images.
     All,
@@ -212,7 +212,7 @@ impl ImageQueryKind {
 }
 
 /// Represents the ordering options available for the query results.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum OrderBy {
     /// Orders the results by creation date in ascending order.
     CreatedAtAsc,
@@ -225,6 +225,9 @@ pub enum OrderBy {
 
     /// Orders the results by file size in descending order.
     FileSizeDesc,
+
+    /// Orders the results randomly.
+    Random,
 }
 
 impl OrderBy {
@@ -238,12 +241,13 @@ impl OrderBy {
             OrderBy::CreatedAtDesc => " ORDER BY created_at DESC",
             OrderBy::FileSizeAsc => " ORDER BY file_size ASC",
             OrderBy::FileSizeDesc => " ORDER BY file_size DESC",
+            OrderBy::Random => " ORDER BY RANDOM()",
         }
     }
 }
 
 /// Represents a full query including logical expression and pagination.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ImageQuery {
     /// The logical expression used for filtering.
     pub expr: ImageQueryKind,

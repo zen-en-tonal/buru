@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use crate::{AppConfig, AppState};
 use axum::{
     Json,
@@ -7,13 +5,14 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use buru::prelude::*;
+use buru::{prelude::*, query};
 use bytes::BytesMut;
 use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 #[derive(Deserialize)]
-pub struct ImageQuery {
+pub struct ImageQueryParam {
     tags: Option<String>, // e.g. "cute cat"
     page: Option<u32>,
     limit: Option<u32>,
@@ -265,28 +264,53 @@ impl ImageResponse {
     }
 }
 
+impl From<ImageQueryParam> for query::ImageQuery {
+    fn from(value: ImageQueryParam) -> Self {
+        let tags = value
+            .tags
+            .unwrap_or_default()
+            .split_whitespace()
+            .map(String::from)
+            .collect::<Vec<_>>();
+
+        let mut exprs: Vec<query::ImageQueryExpr> = vec![];
+        let mut order_by: Option<query::OrderBy> = None;
+
+        for tag in tags {
+            match tag.as_str() {
+                negate if tag.starts_with("-") => exprs.push(query::image::not(query::image::tag(
+                    negate.strip_prefix("-").unwrap(),
+                ))),
+                order if tag.starts_with("order:") => match order.strip_prefix("order:").unwrap() {
+                    "random" => order_by = Some(OrderBy::Random),
+                    "created_at" => order_by = Some(OrderBy::CreatedAtAsc),
+                    "created_at_desc" => order_by = Some(OrderBy::CreatedAtDesc),
+                    "filesize" => order_by = Some(OrderBy::FileSizeAsc),
+                    "filesize_desc" => order_by = Some(OrderBy::FileSizeDesc),
+                    _ => (),
+                },
+                other => exprs.push(query::image::tag(other)),
+            }
+        }
+
+        query::ImageQuery {
+            expr: exprs
+                .into_iter()
+                .reduce(ImageQueryExpr::and)
+                .map(ImageQueryKind::Where)
+                .unwrap_or(ImageQueryKind::All),
+            limit: value.limit.or(Some(20)),
+            offset: Some((value.page.unwrap_or(1) - 1) * value.limit.unwrap_or(20)),
+            order: order_by,
+        }
+    }
+}
+
 pub async fn get_images(
     State(app): State<AppState>,
-    Query(params): Query<ImageQuery>,
+    Query(params): Query<ImageQueryParam>,
 ) -> Result<Json<Vec<ImageResponse>>, ImageError> {
-    let tags = params
-        .tags
-        .unwrap_or_default()
-        .split_whitespace()
-        .map(String::from)
-        .collect::<Vec<_>>();
-
-    let query = buru::query::ImageQuery::new(
-        tags.into_iter()
-            .map(ImageQueryExpr::Tag)
-            .reduce(ImageQueryExpr::and)
-            .map(ImageQueryKind::Where)
-            .unwrap_or(ImageQueryKind::All),
-    )
-    .with_limit(params.limit.unwrap_or(20))
-    .with_offset((params.page.unwrap_or(1) - 1) * params.limit.unwrap_or(20));
-
-    let results = query_image(&app.db, &app.storage, query).await?;
+    let results = query_image(&app.db, &app.storage, params.into()).await?;
 
     Ok(Json(
         results
@@ -357,7 +381,7 @@ pub async fn post_image(
 pub async fn put_tags(
     State(app): State<AppState>,
     Path(id): Path<i64>,
-    Query(params): Query<ImageQuery>,
+    Query(params): Query<ImageQueryParam>,
 ) -> Result<Json<ImageResponse>, ImageError> {
     let tags = params.tags.unwrap_or_default();
     let tags = tags.split_whitespace().collect::<Vec<_>>();
@@ -424,5 +448,34 @@ impl IntoResponse for ImageError {
         };
 
         (status, Json(ErrorResponse { message })).into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ImageQueryParam;
+    use buru::query::{ImageQuery, ImageQueryKind, OrderBy, image};
+
+    #[test]
+    fn test_build_query() {
+        let image_query = ImageQueryParam {
+            tags: Some("cat cute -black order:random".to_string()),
+            page: None,
+            limit: None,
+        };
+
+        assert_eq!(
+            ImageQuery {
+                expr: ImageQueryKind::Where(
+                    image::tag("cat")
+                        .and(image::tag("cute"))
+                        .and(image::not(image::tag("black")))
+                ),
+                limit: Some(20),
+                offset: Some(0),
+                order: Some(OrderBy::Random)
+            },
+            image_query.into()
+        )
     }
 }
