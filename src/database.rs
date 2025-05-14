@@ -109,7 +109,7 @@ impl Database {
                 Ok(v) => return Ok(v),
                 Err(ref e) if e.is_retryable() && attempt + 1 < max_retries => {
                     // backoff: simple fixed delay or exponential if needed
-                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
                     continue;
                 }
                 Err(e) => return Err(e),

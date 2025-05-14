@@ -121,24 +121,35 @@ impl ArchiveImageCommand {
         let hash = storage.create_file(&self.bytes)?;
         let metadata = storage.get_metadata(&hash)?;
 
-        db.ensure_image(&hash).await?;
-        db.ensure_image_has_metadata(&hash, &metadata).await?;
+        let result = {
+            db.ensure_image(&hash).await?;
+            db.ensure_image_has_metadata(&hash, &metadata).await?;
 
-        if !self.tags.is_empty() {
-            attach_tags(
-                db,
-                storage,
-                &hash,
-                &self.tags.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
-            )
-            .await?;
+            if !self.tags.is_empty() {
+                attach_tags(
+                    db,
+                    storage,
+                    &hash,
+                    &self.tags.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
+                )
+                .await?;
+            }
+
+            if let Some(src) = self.source {
+                attach_source(db, storage, &hash, &src).await?;
+            }
+
+            find_image_by_hash(db, storage, &hash).await
+        };
+
+        match result {
+            Ok(ok) => Ok(ok),
+            Err(e) => {
+                storage.ensure_deleted(&hash)?;
+                db.ensure_image_removed(&hash).await?;
+                Err(e)
+            }
         }
-
-        if let Some(src) = self.source {
-            attach_source(db, storage, &hash, &src).await?;
-        }
-
-        find_image_by_hash(db, storage, &hash).await
     }
 }
 
