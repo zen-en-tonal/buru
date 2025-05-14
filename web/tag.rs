@@ -210,6 +210,9 @@ impl IntoResponse for TagError {
                     StorageError::Video(error) => {
                         (StatusCode::UNPROCESSABLE_ENTITY, error.to_string())
                     }
+                    StorageError::Thumbnail { reason } => {
+                        (StatusCode::UNPROCESSABLE_ENTITY, reason)
+                    }
                 },
                 AppError::Database(database_error) => {
                     (StatusCode::SERVICE_UNAVAILABLE, database_error.to_string())

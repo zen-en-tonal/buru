@@ -17,7 +17,6 @@ pub use chrono::{DateTime, Utc};
 use glob::glob;
 use image::{DynamicImage, GenericImageView, ImageBuffer, ImageFormat, ImageReader};
 use std::hash::Hasher;
-use std::ops::Div;
 use std::{
     fmt::Display,
     fs::{self},
@@ -338,6 +337,9 @@ pub enum StorageError {
 
     #[error("Video processing error: {0}")]
     Video(#[from] video_rs::Error),
+
+    #[error("Thumbnail generation failure: {reason:}")]
+    Thumbnail { reason: String },
 }
 
 /// Represents a 8-byte hash.
@@ -503,23 +505,34 @@ impl Media {
 }
 
 fn generate_thumbnail(bytes: &[u8]) -> Result<DynamicImage, StorageError> {
-    let tmpfile = NamedTempFile::new()?;
+    let tmpfile = write_temp_video(bytes)?;
+    let decoder = Decoder::new(tmpfile.path())?;
 
+    let (width, height) = decoder.size();
+    let total_frames = decoder.frames()? as i64;
+    let fps = decoder.frame_rate();
+    let max_frame_for_thumbnail = (fps * 3.0) as i64; // 3 sec
+
+    let target_frame = (total_frames / 2).min(max_frame_for_thumbnail);
+
+    let frame = safe_seek_and_decode(decoder, target_frame)?;
+    let buffer = frame.as_slice().ok_or_else(|| StorageError::Thumbnail {
+        reason: "Failed to get RGB buffer from frame".to_string(),
+    })?;
+
+    let image = ImageBuffer::<image::Rgb<u8>, _>::from_raw(width, height, buffer.to_vec())
+        .ok_or_else(|| StorageError::Thumbnail {
+            reason: "Failed to construct image buffer".to_string(),
+        })?;
+
+    Ok(DynamicImage::ImageRgb8(image))
+}
+
+fn write_temp_video(bytes: &[u8]) -> Result<NamedTempFile, StorageError> {
+    let tmpfile = NamedTempFile::new()?;
     fs::write(tmpfile.path(), bytes)?;
     tmpfile.as_file().sync_all()?;
-
-    let decoder = Decoder::new(tmpfile.path())?;
-    let (width, height) = decoder.size();
-    let target: i64 = decoder.frames()?.div(2) as i64;
-
-    let frame = safe_seek_and_decode(decoder, target)?;
-
-    let buf = frame.as_slice().expect("");
-
-    let img: ImageBuffer<image::Rgb<u8>, Vec<u8>> =
-        ImageBuffer::from_raw(width, height, buf.to_vec()).unwrap();
-
-    Ok(DynamicImage::ImageRgb8(img))
+    Ok(tmpfile)
 }
 
 fn safe_seek_and_decode(mut decoder: Decoder, frame_index: i64) -> Result<Frame, StorageError> {
