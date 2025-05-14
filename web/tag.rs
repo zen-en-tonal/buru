@@ -191,10 +191,9 @@ impl IntoResponse for TagError {
         let (status, message) = match self {
             TagError::App(app_error) => match app_error {
                 AppError::Storage(storage_error) => match storage_error {
-                    StorageError::HashCollision { existing_path } => (
-                        StatusCode::BAD_REQUEST,
-                        existing_path.to_string_lossy().to_string(),
-                    ),
+                    StorageError::HashCollision { hash, .. } => {
+                        (StatusCode::BAD_REQUEST, hash.to_string())
+                    }
                     StorageError::UnsupportedFile { kind } => (
                         StatusCode::BAD_REQUEST,
                         kind.map(|k| k.mime_type().to_string())

@@ -118,7 +118,19 @@ impl ArchiveImageCommand {
     ///
     /// Returns a `Result` containing the full `Image` model upon success or an `AppError` on failure.
     pub async fn execute(self, storage: &Storage, db: &Database) -> Result<Media, AppError> {
-        let hash = storage.create_file(&self.bytes)?;
+        let hash = match storage.create_file(&self.bytes) {
+            Ok(hash) => Ok(hash),
+            Err(e) => match &e {
+                StorageError::HashCollision { hash, .. } => {
+                    if !db.image_exists(hash).await? {
+                        Ok(hash.clone())
+                    } else {
+                        Err(e)
+                    }
+                }
+                _ => Err(e),
+            },
+        }?;
         let metadata = storage.get_metadata(&hash)?;
 
         let result = {
@@ -145,8 +157,7 @@ impl ArchiveImageCommand {
         match result {
             Ok(ok) => Ok(ok),
             Err(e) => {
-                storage.ensure_deleted(&hash)?;
-                db.ensure_image_removed(&hash).await?;
+                remove_image(storage, db, hash).await?;
                 Err(e)
             }
         }
@@ -235,8 +246,8 @@ pub async fn remove_image(
     db: &Database,
     hash: PixelHash,
 ) -> Result<(), AppError> {
-    db.ensure_image_removed(&hash).await?;
     storage.ensure_deleted(&hash)?;
+    db.ensure_image_removed(&hash).await?;
 
     Ok(())
 }

@@ -94,6 +94,7 @@ impl Storage {
         if let Some(entry) = self.find_entry(&pixel_hash) {
             return Err(StorageError::HashCollision {
                 existing_path: entry.content_path().to_owned(),
+                hash: pixel_hash,
             });
         }
 
@@ -320,8 +321,11 @@ pub struct ImageMetadata {
 /// Errors that can occur during storage operations.
 #[derive(Debug, Error)]
 pub enum StorageError {
-    #[error("Same pixel hash already exists at path: {existing_path}")]
-    HashCollision { existing_path: PathBuf },
+    #[error("Same pixel hash already exists: {hash:}")]
+    HashCollision {
+        existing_path: PathBuf,
+        hash: PixelHash,
+    },
 
     #[error("Unsupported or undetectable file format: {kind:?}")]
     UnsupportedFile { kind: Option<infer::Type> },
@@ -648,7 +652,7 @@ mod tests {
         storage.create_file(file_bytes).unwrap();
 
         let result = storage.create_file(file_bytes);
-        let Err(StorageError::HashCollision { existing_path }) = result else {
+        let Err(StorageError::HashCollision { existing_path, .. }) = result else {
             panic!("Expected HashCollision error, but got {:?}", result);
         };
 

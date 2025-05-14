@@ -49,6 +49,13 @@ pub trait Dialect {
     /// - `idx`: The 1-based parameter index (used in dialects that number placeholders).
     fn placeholder(idx: usize) -> String;
 
+    fn exists_image() -> String {
+        format!(
+            "SELECT EXISTS ( SELECT 1 FROM images WHERE hash = {} )",
+            Self::placeholder(1)
+        )
+    }
+
     /// Returns a SQL `EXISTS` subquery to check if an image is tagged with a given tag.
     ///
     /// The returned SQL should be used within a WHERE clause and include a placeholder

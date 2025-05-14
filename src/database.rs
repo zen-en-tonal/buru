@@ -119,6 +119,42 @@ impl Database {
         unreachable!("Retry loop should return before exceeding max_retries")
     }
 
+    /// Determines if an image exists in the database by its pixel hash.
+    ///
+    /// This method checks the existence of an image in the `images` table using the provided pixel hash.
+    ///
+    /// # Arguments
+    ///
+    /// * `hash` - A reference to the `PixelHash` of the image to check.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing a `bool`:
+    /// - `true` if the image exists in the database,
+    /// - `false` if the image does not exist.
+    ///
+    /// On failure, it returns a `DatabaseError`.
+    pub async fn image_exists(&self, hash: &PixelHash) -> Result<bool, DatabaseError> {
+        let stmt = CurrentDialect::exists_image();
+
+        let res = self
+            .retry(|| async {
+                let query = sqlx::query_scalar(&stmt).bind(hash.clone().to_string());
+                let sql = query.sql();
+                query
+                    .fetch_one(&self.pool)
+                    .await
+                    .map_err(|e| DatabaseError::QueryFailed {
+                        operation: DbOperation::QueryImages,
+                        sql: sql.to_string(),
+                        source: e,
+                    })
+            })
+            .await?;
+
+        Ok(res)
+    }
+
     /// Ensures that an image is present in the `images` table.
     ///
     /// This will insert the image hash if it does not already exist.
@@ -131,6 +167,10 @@ impl Database {
     ///
     /// This function returns a `Result` indicating success or failure.
     pub async fn ensure_image(&self, hash: &PixelHash) -> Result<(), DatabaseError> {
+        if self.image_exists(hash).await? {
+            return Ok(());
+        }
+
         let stmt = CurrentDialect::ensure_image_statement();
 
         self.retry(|| async {
