@@ -1,0 +1,8 @@
+{
+  "name": "Rust Dev with Postgres",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "app",
+  "workspaceFolder": "/workspace",
+  "postCreateCommand": "cargo build",
+  "forwardPorts": [5432]
+}
