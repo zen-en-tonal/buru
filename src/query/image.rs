@@ -102,34 +102,42 @@ impl ImageQueryExpr {
     ///
     /// # Returns
     /// - `(String, Vec<String>)`: A tuple containing the SQL fragment and the corresponding parameter values.
-    pub fn to_sql(&self) -> (String, Vec<String>) {
+    pub fn to_sql(&self, schema: Option<&str>) -> (String, Vec<String>) {
         let mut params = Vec::new();
-        let sql = self.build_sql(&mut params);
+        let sql = self.build_sql(&mut params, schema);
         (sql, params)
     }
 
-    fn build_sql(&self, params: &mut Vec<String>) -> String {
+    fn build_sql(&self, params: &mut Vec<String>, schema: Option<&str>) -> String {
         match self {
             ImageQueryExpr::Tag(tag) => {
                 params.push(tag.clone());
-                CurrentDialect::exists_tag_query(params.len())
+                CurrentDialect::exists_tag_query(schema, params.len())
             }
             ImageQueryExpr::And(lhs, rhs) => {
-                format!("({} AND {})", lhs.build_sql(params), rhs.build_sql(params))
+                format!(
+                    "({} AND {})",
+                    lhs.build_sql(params, schema),
+                    rhs.build_sql(params, schema)
+                )
             }
             ImageQueryExpr::Or(lhs, rhs) => {
-                format!("({} OR {})", lhs.build_sql(params), rhs.build_sql(params))
+                format!(
+                    "({} OR {})",
+                    lhs.build_sql(params, schema),
+                    rhs.build_sql(params, schema)
+                )
             }
             ImageQueryExpr::Not(expr) => {
-                format!("NOT {}", expr.build_sql(params))
+                format!("NOT {}", expr.build_sql(params, schema))
             }
             ImageQueryExpr::DateUntil(date_time) => {
                 params.push(date_time.to_rfc3339());
-                CurrentDialect::exists_date_until_query(params.len())
+                CurrentDialect::exists_date_until_query(schema, params.len())
             }
             ImageQueryExpr::DateSince(date_time) => {
                 params.push(date_time.to_rfc3339());
-                CurrentDialect::exists_date_since_query(params.len())
+                CurrentDialect::exists_date_since_query(schema, params.len())
             }
         }
     }
@@ -200,11 +208,11 @@ impl ImageQueryKind {
     ///
     /// # Returns
     /// - `(String, Vec<String>)`: SQL clause and ordered parameters
-    pub fn to_sql(&self) -> (String, Vec<String>) {
+    pub fn to_sql(&self, schema: Option<&str>) -> (String, Vec<String>) {
         match self {
             ImageQueryKind::All => ("".to_string(), vec![]),
             ImageQueryKind::Where(query_expr) => {
-                let (sql, params) = query_expr.to_sql();
+                let (sql, params) = query_expr.to_sql(schema);
                 (format!("WHERE {}", sql), params)
             }
         }
@@ -340,25 +348,32 @@ impl ImageQuery {
     /// - `(String, Vec<String>)`: SQL clause and ordered parameters
     ///
     /// The generated SQL includes any specified LIMIT or OFFSET.
-    pub fn to_sql(&self) -> (String, Vec<String>) {
-        let (mut where_sql, mut params) = self.expr.to_sql();
-        where_sql.push_str(
-            self.order
-                .clone()
-                .unwrap_or(OrderBy::CreatedAtDesc)
-                .to_sql(),
-        );
+    pub fn to_sql(&self, schema: Option<&str>) -> (String, Vec<String>) {
+        let (mut where_sql, mut params) = self.expr.to_sql(schema);
+
+        if let Some(order) = &self.order {
+            where_sql.push_str(order.to_sql());
+        }
 
         if let Some(limit) = self.limit {
             params.push(limit.to_string());
-            where_sql
-                .push_str(format!(" LIMIT {}", CurrentDialect::placeholder(params.len())).as_str());
+            where_sql.push_str(
+                format!(
+                    " LIMIT CAST({} AS INTEGER)",
+                    CurrentDialect::placeholder(params.len())
+                )
+                .as_str(),
+            );
         }
 
         if let Some(offset) = self.offset {
             params.push(offset.to_string());
             where_sql.push_str(
-                format!(" OFFSET {}", CurrentDialect::placeholder(params.len())).as_str(),
+                format!(
+                    " OFFSET CAST({} AS INTEGER)",
+                    CurrentDialect::placeholder(params.len())
+                )
+                .as_str(),
             );
         }
 
@@ -369,6 +384,7 @@ impl ImageQuery {
 #[cfg(test)]
 mod tests {
     use super::{CurrentDialect, Dialect, ImageQuery, date_until, not, tag};
+    use crate::query::OrderBy;
 
     #[test]
     fn test_build_query() {
@@ -379,17 +395,18 @@ mod tests {
                 .and(date_until("2024-12-01T00:00:00Z")),
         )
         .with_limit(10)
-        .with_offset(20);
+        .with_offset(20)
+        .with_order(OrderBy::CreatedAtDesc);
 
-        let (sql, params) = query.to_sql();
+        let (sql, params) = query.to_sql(None);
 
         assert_eq!(
             format!(
-                "WHERE ((({} AND {}) OR NOT {}) AND {}) ORDER BY created_at DESC LIMIT {} OFFSET {}",
-                CurrentDialect::exists_tag_query(1),
-                CurrentDialect::exists_tag_query(2),
-                CurrentDialect::exists_tag_query(3),
-                CurrentDialect::exists_date_until_query(4),
+                "WHERE ((({} AND {}) OR NOT {}) AND {}) ORDER BY created_at DESC LIMIT CAST({} AS INTEGER) OFFSET CAST({} AS INTEGER)",
+                CurrentDialect::exists_tag_query(None, 1),
+                CurrentDialect::exists_tag_query(None, 2),
+                CurrentDialect::exists_tag_query(None, 3),
+                CurrentDialect::exists_date_until_query(None, 4),
                 CurrentDialect::placeholder(5),
                 CurrentDialect::placeholder(6),
             ),

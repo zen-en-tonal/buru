@@ -1,4 +1,5 @@
-# docker/Dockerfile
+ARG BUILD_FEATURES=sqlite
+
 FROM rust:slim as builder
 
 WORKDIR /app
@@ -14,7 +15,7 @@ RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev
 
-RUN cargo build --release --bin web
+RUN cargo build --release --bin web --features ${BUILD_FEATURES} --no-default-features
 
 
 FROM debian:stable-slim

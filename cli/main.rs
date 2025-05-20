@@ -29,9 +29,9 @@ pub enum Commands {
 async fn main() -> Result<(), AppError> {
     let cli = Cli::parse();
 
-    let db = Database::with_migration(Pool::connect("sqlite:./db/database.db").await.unwrap())
-        .await
-        .unwrap();
+    let db = Database::new(Pool::connect("sqlite:./db/database.db").await.unwrap());
+    db.migrate().await.unwrap();
+
     let storage = Storage::new(PathBuf::from("./images"));
 
     match cli.command {

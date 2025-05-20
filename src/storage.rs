@@ -347,7 +347,7 @@ pub enum StorageError {
 }
 
 /// Represents a 8-byte hash.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PixelHash([u8; 8]);
 
 impl PixelHash {

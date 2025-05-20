@@ -32,7 +32,7 @@
 //!     .with_limit(10)
 //!     .with_offset(0)
 //!     .with_order(OrderBy::CreatedAtAsc);
-//! let (sql, params) = query.to_sql();
+//! let (sql, params) = query.to_sql(None);
 //! ```
 //!
 //! Creating a tag query to find all tags starting with a specific prefix:

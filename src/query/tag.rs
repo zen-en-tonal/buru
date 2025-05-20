@@ -143,14 +143,23 @@ impl TagQuery {
 
         if let Some(limit) = self.limit {
             params.push(limit.to_string());
-            where_sql
-                .push_str(format!(" LIMIT {}", CurrentDialect::placeholder(params.len())).as_str());
+            where_sql.push_str(
+                format!(
+                    " LIMIT CAST({} AS INTEGER)",
+                    CurrentDialect::placeholder(params.len())
+                )
+                .as_str(),
+            );
         }
 
         if let Some(offset) = self.offset {
             params.push(offset.to_string());
             where_sql.push_str(
-                format!(" OFFSET {}", CurrentDialect::placeholder(params.len())).as_str(),
+                format!(
+                    " OFFSET CAST({} AS INTEGER)",
+                    CurrentDialect::placeholder(params.len())
+                )
+                .as_str(),
             );
         }
 

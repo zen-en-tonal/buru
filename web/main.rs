@@ -7,7 +7,7 @@ use axum::response::IntoResponse;
 use axum::routing::put;
 use axum::{Router, routing::get};
 use buru::{database::Database, storage::Storage};
-use sqlx::{Pool, Sqlite, migrate::MigrateDatabase};
+use sqlx::Pool;
 use std::{env, fs};
 use std::{path::PathBuf, sync::Arc};
 
@@ -18,6 +18,7 @@ pub struct AppConfig {
     pub image_dir: PathBuf,
     pub port: u16,
     pub body_limit: usize,
+    pub schema: Option<String>,
 }
 
 impl AppConfig {
@@ -26,6 +27,7 @@ impl AppConfig {
 
         AppConfig {
             database_url: env::var("DATABASE_URL").expect("DATABASE_URL is required"),
+            schema: env::var("DATABASE_SCHEMA").ok(),
             cdn_base_url: env::var("CDN_BASE_URL")
                 .unwrap_or_else(|_| "http://localhost:3000/files".to_string())
                 .into(),
@@ -44,13 +46,22 @@ impl AppConfig {
     }
 
     pub async fn create_database(&self) {
-        Sqlite::create_database(&self.database_url).await.unwrap();
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        {
+            use sqlx::migrate::MigrateDatabase;
+            sqlx::Sqlite::create_database(&self.database_url)
+                .await
+                .unwrap();
+        }
     }
 
     pub async fn into_state(self) -> AppState {
-        let db = Database::with_migration(Pool::connect(&self.database_url).await.unwrap())
-            .await
-            .unwrap();
+        let db = Database {
+            pool: Pool::connect(&self.database_url).await.unwrap(),
+            schema: self.schema.clone(),
+        };
+        db.migrate().await.unwrap();
+
         let storage = Storage::new(self.image_dir.clone());
 
         AppState {
