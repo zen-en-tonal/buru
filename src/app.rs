@@ -462,9 +462,11 @@ mod tests {
 
     #[cfg(all(feature = "postgres", not(feature = "sqlite")))]
     async fn get_db() -> Database {
-        let conn = "postgres://postgres:password@db/devdb";
+        use std::env;
+        let conn =
+            env::var("DATABASE_URL").unwrap_or("postgres://postgres:password@db/devdb".to_string());
 
-        let pool = Pool::connect(conn).await.unwrap();
+        let pool = Pool::connect(&conn).await.unwrap();
         let schema = format!("test_{}", uuid::Uuid::new_v4().to_string().replace("-", ""));
 
         let db = Database::new(pool).with_schema(&schema);

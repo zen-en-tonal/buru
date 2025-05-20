@@ -49,4 +49,6 @@ jobs:
         run: cargo test --all --features sqlite --no-default-features
 
       - name: Test features=postgres
+        env:
+          DATABASE_URL: postgres://postgres:password@localhost/devdb
         run: cargo test --all --features postgres --no-default-features
