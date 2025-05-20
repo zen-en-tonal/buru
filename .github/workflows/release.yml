@@ -23,7 +23,7 @@ jobs:
       - name: Publish to crates.io
         run: cargo publish --no-verify
 
-  docker:
+  docker-sqlite:
     needs: publish-crate
     runs-on: ubuntu-latest
     permissions:
@@ -32,24 +32,46 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Log in to GitHub Container Registry
+      - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set additional tags
-        id: tags
+      - name: Build and push SQLite image
         run: |
           VERSION=${GITHUB_REF#refs/tags/}
-          MINOR=$(echo $VERSION | grep -oE '^v?[0-9]+\.[0-9]+')
-          echo "TAGS=ghcr.io/${{ github.repository }}:$VERSION,ghcr.io/${{ github.repository }}:$MINOR,ghcr.io/${{ github.repository }}:latest" >> $GITHUB_ENV
+          docker buildx build \
+            --build-arg BUILD_FEATURES=sqlite \
+            --tag ghcr.io/${{ github.repository }}:${VERSION}-sqlite \
+            --tag ghcr.io/${{ github.repository }}:latest-sqlite \
+            --tag ghcr.io/${{ github.repository }}:latest \
+            --push \
+            -f docker/Dockerfile .
 
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v5
+  docker-postgres:
+    needs: publish-crate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
         with:
-          context: .
-          file: docker/Dockerfile
-          push: true
-          tags: ${{ env.TAGS }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Postgres image
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          docker buildx build \
+            --build-arg BUILD_FEATURES=postgres \
+            --tag ghcr.io/${{ github.repository }}:${VERSION}-postgres \
+            --tag ghcr.io/${{ github.repository }}:latest-postgres \
+            --push \
+            -f docker/Dockerfile .
