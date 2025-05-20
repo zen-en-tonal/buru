@@ -2,16 +2,14 @@ use super::{Db, Dialect};
 use sqlx::Row;
 
 /// SQLite dialect implementation of the `Dialect` trait.
-#[cfg(feature = "sqlite")]
 pub struct SqliteDialect;
 
-#[cfg(feature = "sqlite")]
 impl Dialect for SqliteDialect {
     fn placeholder(_idx: usize) -> String {
         "?".to_string()
     }
 
-    async fn migration(pool: &sqlx::Pool<Db>) -> Result<(), sqlx::Error> {
+    async fn migration(pool: &sqlx::Pool<Db>, _schema: Option<&str>) -> Result<(), sqlx::Error> {
         let stmts = vec![
             r#"CREATE TABLE IF NOT EXISTS images (
                 hash TEXT PRIMARY KEY,

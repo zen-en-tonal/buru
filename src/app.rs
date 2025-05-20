@@ -438,14 +438,51 @@ mod tests {
     use crate::{
         app::{ArchiveImageCommand, attach_tags, find_image_by_hash, query_image, remove_image},
         database::{Database, Pool},
+        dialect::Db,
         query::{ImageQuery, ImageQueryExpr, ImageQueryKind},
         storage::Storage,
     };
     use tempfile::TempDir;
 
+    #[cfg(all(feature = "postgres", not(feature = "sqlite")))]
+    async fn drop_schema(pool: sqlx::Pool<Db>, schema: Option<&str>) -> Result<(), sqlx::Error> {
+        if let Some(schema) = schema {
+            sqlx::query(&format!("DROP SCHEMA {} CASCADE", schema))
+                .execute(&pool)
+                .await?;
+        }
+
+        Ok(())
+    }
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    async fn drop_schema(_pool: sqlx::Pool<Db>, _schema: Option<&str>) -> Result<(), sqlx::Error> {
+        Ok(())
+    }
+
+    #[cfg(all(feature = "postgres", not(feature = "sqlite")))]
     async fn get_db() -> Database {
-        let pool = Pool::connect(":memory:").await.unwrap();
-        Database::with_migration(pool.clone()).await.unwrap()
+        let conn = "postgres://postgres:password@db/devdb";
+
+        let pool = Pool::connect(conn).await.unwrap();
+        let schema = format!("test_{}", uuid::Uuid::new_v4().to_string().replace("-", ""));
+
+        let db = Database::new(pool).with_schema(&schema);
+        db.migrate().await.unwrap();
+
+        db
+    }
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    async fn get_db() -> Database {
+        let conn = ":memory:";
+
+        let pool = Pool::connect(conn).await.unwrap();
+
+        let db = Database::new(pool);
+        db.migrate().await.unwrap();
+
+        db
     }
 
     fn get_storage() -> Storage {
@@ -471,6 +508,8 @@ mod tests {
         let res = query_image(&db, &storage, query).await.unwrap();
 
         dbg!(res);
+
+        drop_schema(db.pool, db.schema.as_deref()).await.unwrap();
     }
 
     #[tokio::test]
@@ -487,6 +526,8 @@ mod tests {
             .unwrap();
 
         remove_image(&storage, &db, image.hash).await.unwrap();
+
+        drop_schema(db.pool, db.schema.as_deref()).await.unwrap();
     }
 
     #[tokio::test]
@@ -513,6 +554,8 @@ mod tests {
                 .await
                 .unwrap()
                 .tags
-        )
+        );
+
+        drop_schema(db.pool, db.schema.as_deref()).await.unwrap();
     }
 }

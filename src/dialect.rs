@@ -20,18 +20,38 @@
 //! to the underlying SQL dialect, making it simpler to add support for additional
 //! databases in the future.
 
-#[cfg(feature = "sqlite")]
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
 mod sqlite;
 
 /// The current SQL dialect used at compile time, determined by feature flags.
-#[cfg(feature = "sqlite")]
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
 pub type CurrentDialect = sqlite::SqliteDialect;
 
-#[cfg(feature = "sqlite")]
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
 pub type Db = sqlx::Sqlite;
 
-#[cfg(feature = "sqlite")]
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
 pub type CurrentRow = sqlx::sqlite::SqliteRow;
+
+#[cfg(all(feature = "postgres", not(feature = "sqlite")))]
+mod postgres;
+
+/// The current SQL dialect used at compile time, determined by feature flags.
+#[cfg(all(feature = "postgres", not(feature = "sqlite")))]
+pub type CurrentDialect = postgres::PostgresDialect;
+
+#[cfg(all(feature = "postgres", not(feature = "sqlite")))]
+pub type Db = sqlx::Postgres;
+
+#[cfg(all(feature = "postgres", not(feature = "sqlite")))]
+pub type CurrentRow = sqlx::postgres::PgRow;
+
+fn qualify(schema: Option<&str>, table: &str) -> String {
+    match schema {
+        Some(s) => format!("\"{}\".\"{}\"", s, table),
+        None => table.to_string(),
+    }
+}
 
 /// A trait for SQL dialects to support database-specific query generation.
 ///
@@ -40,84 +60,62 @@ pub type CurrentRow = sqlx::sqlite::SqliteRow;
 /// away differences in placeholder syntax, conditional insert behavior, and
 /// DELETE/SELECT semantics so that higher-level logic can remain dialect-agnostic.
 pub trait Dialect {
-    /// Returns the SQL placeholder syntax for the given parameter index.
-    ///
-    /// - SQLite: `?`
-    /// - PostgreSQL: `$1`, `$2`, ...
-    ///
-    /// # Parameters
-    /// - `idx`: The 1-based parameter index (used in dialects that number placeholders).
     fn placeholder(idx: usize) -> String;
 
-    fn exists_image() -> String {
+    fn exists_image(schema: Option<&str>) -> String {
         format!(
-            "SELECT EXISTS ( SELECT 1 FROM images WHERE hash = {} )",
+            "SELECT EXISTS ( SELECT 1 FROM {} WHERE hash = {} )",
+            qualify(schema, "images"),
             Self::placeholder(1)
         )
     }
 
-    /// Returns a SQL `EXISTS` subquery to check if an image is tagged with a given tag.
-    ///
-    /// The returned SQL should be used within a WHERE clause and include a placeholder
-    /// for the tag name.
-    ///
-    /// # Parameters
-    /// - `idx`: The index to be used in the query for tagging.
-    fn exists_tag_query(idx: usize) -> String {
+    fn exists_tag_query(schema: Option<&str>, idx: usize) -> String {
+        let table = qualify(schema, "image_tags");
         format!(
-            "EXISTS (SELECT 1 FROM image_tags WHERE image_tags.image_hash = image_with_metadata.hash AND image_tags.tag_name = {})",
+            "EXISTS (SELECT 1 FROM {table} WHERE {table}.image_hash = image_with_metadata.hash AND {table}.tag_name = {})",
             Self::placeholder(idx)
         )
     }
 
-    /// Returns a SQL query to check if a date is until a certain point.
-    ///
-    /// # Parameters
-    /// - `idx`: The parameter index for the date in the query.
-    fn exists_date_until_query(idx: usize) -> String {
+    fn exists_date_until_query(schema: Option<&str>, idx: usize) -> String {
+        let table = qualify(schema, "image_metadatas");
         format!(
-            "EXISTS (SELECT 1 FROM image_metadatas WHERE image_metadatas.image_hash = images.hash AND created_at <= {})",
+            "EXISTS (SELECT 1 FROM {table} WHERE {table}.image_hash = images.hash AND created_at <= {})",
             Self::placeholder(idx)
         )
     }
 
-    /// Returns a SQL query to check if a date is since a certain point.
-    ///
-    /// # Parameters
-    /// - `idx`: The parameter index for the date in the query.
-    fn exists_date_since_query(idx: usize) -> String {
+    fn exists_date_since_query(schema: Option<&str>, idx: usize) -> String {
+        let table = qualify(schema, "image_metadatas");
         format!(
-            "EXISTS (SELECT 1 FROM image_metadatas WHERE image_metadatas.image_hash = images.hash AND created_at >= {})",
+            "EXISTS (SELECT 1 FROM {table} WHERE {table}.image_hash = images.hash AND created_at >= {})",
             Self::placeholder(idx)
         )
     }
 
-    /// Returns the SQL statement to ensure an image exists in the `images` table.
-    ///
-    /// Usually implemented as an insert that ignores duplicates (e.g., `INSERT OR IGNORE`).
-    fn ensure_image_statement() -> String {
+    fn ensure_image_statement(schema: Option<&str>) -> String {
         format!(
-            "INSERT OR IGNORE INTO images (hash) VALUES ({})",
+            "INSERT OR IGNORE INTO {} (hash) VALUES ({})",
+            qualify(schema, "images"),
             Self::placeholder(1)
         )
     }
 
-    /// Returns the SQL statement to ensure a tag exists in the `tags` table.
-    ///
-    /// Should insert the tag name only if it doesn't already exist.
-    fn ensure_tag_statement() -> String {
+    fn ensure_tag_statement(schema: Option<&str>) -> String {
         format!(
-            "INSERT OR IGNORE INTO tags (name) VALUES ({})",
+            "INSERT OR IGNORE INTO {} (name) VALUES ({})",
+            qualify(schema, "tags"),
             Self::placeholder(1)
         )
     }
 
-    /// Returns the SQL statement to ensure metadata is up to date.
-    fn ensure_metadata_statement() -> String {
+    fn ensure_metadata_statement(schema: Option<&str>) -> String {
         format!(
-            r#"INSERT OR IGNORE INTO image_metadatas
+            r#"INSERT OR IGNORE INTO {}
             (image_hash, width, height, format, color_type, file_size, created_at, duration)
             VALUES ({}, {}, {}, {}, {}, {}, {}, {})"#,
+            qualify(schema, "image_metadatas"),
             Self::placeholder(1),
             Self::placeholder(2),
             Self::placeholder(3),
@@ -129,129 +127,111 @@ pub trait Dialect {
         )
     }
 
-    /// Returns the SQL statement to update a source.
-    fn update_source_statement() -> String {
+    fn update_source_statement(schema: Option<&str>) -> String {
         format!(
-            "UPDATE images SET source = {} WHERE hash = {}",
+            "UPDATE {} SET source = {} WHERE hash = {}",
+            qualify(schema, "images"),
             Self::placeholder(1),
             Self::placeholder(2)
         )
     }
 
-    /// Returns the SQL statement to query a source.
-    fn query_source_statement() -> String {
+    fn query_source_statement(schema: Option<&str>) -> String {
         format!(
-            "SELECT source FROM images WHERE hash = {}",
+            "SELECT source FROM {} WHERE hash = {}",
+            qualify(schema, "images"),
             Self::placeholder(1)
         )
     }
 
-    /// Returns the SQL statement to ensure a tag is attached to an image.
-    ///
-    /// Should insert a `(image_hash, tag_name)` pair into the `image_tags` table
-    /// without duplicating existing entries.
-    fn ensure_image_tag_statement() -> String {
+    fn ensure_image_tag_statement(schema: Option<&str>) -> String {
         format!(
-            "INSERT OR IGNORE INTO image_tags (image_hash, tag_name) VALUES ({}, {})",
+            "INSERT OR IGNORE INTO {} (image_hash, tag_name) VALUES ({}, {})",
+            qualify(schema, "image_tags"),
             Self::placeholder(1),
             Self::placeholder(2),
         )
     }
 
-    /// Returns a full SELECT statement for retrieving image hashes that match
-    /// the given condition clause.
-    ///
-    /// # Parameters
-    /// - `condition`: The SQL fragment (e.g., WHERE clause) generated by the query module.
-    fn query_image_statement(condition: String) -> String {
-        format!("SELECT hash FROM image_with_metadata {}", condition)
-    }
-
-    /// Returns the SQL statement to count images that match the given condition.
-    ///
-    /// # Parameters
-    /// - `condition`: The SQL fragment for filtering images.
-    fn count_image_statement(condition: String) -> String {
-        format!("SELECT COUNT(hash) FROM image_with_metadata {}", condition)
-    }
-
-    /// Returns the SQL statement to count images associated with a specific tag.
-    ///
-    /// This query should count the number of images that are linked to a given tag,
-    /// typically identified by the tag's name or identifier.
-    fn count_image_by_tag_statement() -> String {
+    fn query_image_statement(schema: Option<&str>, condition: String) -> String {
         format!(
-            "SELECT count FROM tag_counts WHERE tag_name = {}",
+            "SELECT hash FROM {} {}",
+            qualify(schema, "image_with_metadata"),
+            condition
+        )
+    }
+
+    fn count_image_statement(schema: Option<&str>, condition: String) -> String {
+        format!(
+            "SELECT COUNT(*) FROM {} {}",
+            qualify(schema, "image_with_metadata"),
+            condition
+        )
+    }
+
+    fn count_image_by_tag_statement(schema: Option<&str>) -> String {
+        format!(
+            "SELECT count FROM {} WHERE tag_name = {}",
+            qualify(schema, "tag_counts"),
             Self::placeholder(1)
         )
     }
 
-    /// Returns the SQL statement to refresh the counts of tags associated with images.
-    ///
-    /// This statement should update the count of times each tag is used across all images,
-    /// ensuring that the tag count reflects the current state of the database.
-    fn refresh_tag_counts_statement() -> &'static str {
-        r#"BEGIN TRANSACTION;
-        DELETE FROM tag_counts;
-        INSERT INTO tag_counts SELECT tag_name, COUNT(*) FROM image_tags GROUP BY tag_name;
-        COMMIT;"#
+    fn refresh_tag_counts_statement(schema: Option<&str>) -> Vec<String> {
+        vec![
+            format!("DELETE FROM {};", qualify(schema, "tag_counts")),
+            format!(
+                "INSERT INTO {} SELECT tag_name, COUNT(*) FROM {} GROUP BY tag_name;",
+                qualify(schema, "tag_counts"),
+                qualify(schema, "image_tags")
+            ),
+        ]
     }
 
-    /// Returns the SQL statement to query tags based on a condition.
-    ///
-    /// # Parameters
-    /// - `condition`: The SQL condition to filter tags.
-    fn query_tag_statement(condition: String) -> String {
-        format!("SELECT name FROM tags {}", condition)
+    fn query_tag_statement(schema: Option<&str>, condition: String) -> String {
+        format!("SELECT name FROM {} {}", qualify(schema, "tags"), condition)
     }
 
-    /// Returns the SQL statement to retrieve all tags for a given image hash.
-    ///
-    /// Should return a single-column result (`tag_name`).
-    fn query_tags_by_image_statement() -> String {
+    fn query_tags_by_image_statement(schema: Option<&str>) -> String {
         format!(
-            "SELECT tag_name FROM image_tags WHERE image_hash = {}",
+            "SELECT tag_name FROM {} WHERE image_hash = {}",
+            qualify(schema, "image_tags"),
             Self::placeholder(1)
         )
     }
 
-    /// Returns the SQL statement for querying metadata.
-    fn query_metadata_statement() -> String {
+    fn query_metadata_statement(schema: Option<&str>) -> String {
         format!(
-            "SELECT * FROM image_metadatas WHERE image_hash = {}",
+            "SELECT * FROM {} WHERE image_hash = {}",
+            qualify(schema, "image_metadatas"),
             Self::placeholder(1)
         )
     }
 
-    /// Returns the SQL statement to remove a tag from an image.
-    ///
-    /// This should delete a row from the `image_tags` table based on
-    /// both `image_hash` and `tag_name`.
-    fn delete_image_tag_statement() -> String {
+    fn delete_image_tag_statement(schema: Option<&str>) -> String {
         format!(
-            "DELETE FROM image_tags WHERE image_hash = {} AND tag_name = {}",
+            "DELETE FROM {} WHERE image_hash = {} AND tag_name = {}",
+            qualify(schema, "image_tags"),
             Self::placeholder(1),
             Self::placeholder(2),
         )
     }
 
-    /// Returns the SQL statement to delete an image from the `images` table.
-    ///
-    /// Typically used in combination with a `DELETE` from `image_tags`.
-    fn delete_image_statement() -> String {
-        format!("DELETE FROM images WHERE hash = {}", Self::placeholder(1))
-    }
-
-    /// Returns the SQL statement to delete all tags associated with an image.
-    ///
-    /// This removes all rows from `image_tags` where `image_hash` matches.
-    fn delete_tags_by_image_statement() -> String {
+    fn delete_image_statement(schema: Option<&str>) -> String {
         format!(
-            "DELETE FROM image_tags WHERE image_hash = {}",
+            "DELETE FROM {} WHERE hash = {}",
+            qualify(schema, "images"),
             Self::placeholder(1)
         )
     }
 
-    /// Returns a list of SQL migration statements needed for setting up the database.
-    async fn migration(pool: &sqlx::Pool<Db>) -> Result<(), sqlx::Error>;
+    fn delete_tags_by_image_statement(schema: Option<&str>) -> String {
+        format!(
+            "DELETE FROM {} WHERE image_hash = {}",
+            qualify(schema, "image_tags"),
+            Self::placeholder(1)
+        )
+    }
+
+    async fn migration(pool: &sqlx::Pool<Db>, schema: Option<&str>) -> Result<(), sqlx::Error>;
 }

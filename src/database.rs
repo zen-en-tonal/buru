@@ -44,8 +44,8 @@ use thiserror::Error;
 ///
 /// This function returns a `Result` indicating success or failure during
 /// the migration process.
-pub async fn run_migration(pool: &sqlx::Pool<Db>) -> Result<(), sqlx::Error> {
-    CurrentDialect::migration(pool).await
+pub async fn run_migration(pool: &sqlx::Pool<Db>, schema: Option<&str>) -> Result<(), sqlx::Error> {
+    CurrentDialect::migration(pool, schema).await
 }
 
 impl FromRow<'_, CurrentRow> for ImageMetadata {
@@ -78,23 +78,23 @@ impl FromRow<'_, CurrentRow> for ImageMetadata {
 /// The implementation is SQL dialect agnostic and delegates syntax to `Dialect`.
 #[derive(Debug, Clone)]
 pub struct Database {
-    pool: Pool<Db>,
+    pub pool: Pool<Db>,
+    pub schema: Option<String>,
 }
 
 impl Database {
-    /// Construct a `Database` with migrations through the provided pool.
-    ///
-    /// # Arguments
-    ///
-    /// * `pool` - The connection pool to the database.
-    ///
-    /// # Returns
-    ///
-    /// A `Result` containing the constructed `Database`.
-    pub async fn with_migration(pool: sqlx::Pool<Db>) -> Result<Self, sqlx::Error> {
-        run_migration(&pool).await?;
+    pub fn new(pool: sqlx::Pool<Db>) -> Self {
+        Self { pool, schema: None }
+    }
 
-        Ok(Self { pool })
+    pub fn with_schema(mut self, schema: &str) -> Self {
+        self.schema = Some(schema.to_string());
+
+        self
+    }
+
+    pub async fn migrate(&self) -> Result<(), sqlx::Error> {
+        run_migration(&self.pool, self.schema.as_deref()).await
     }
 
     async fn retry<F, Fut, T>(&self, mut op: F) -> Result<T, DatabaseError>
@@ -135,7 +135,7 @@ impl Database {
     ///
     /// On failure, it returns a `DatabaseError`.
     pub async fn image_exists(&self, hash: &PixelHash) -> Result<bool, DatabaseError> {
-        let stmt = CurrentDialect::exists_image();
+        let stmt = CurrentDialect::exists_image(self.schema.as_deref());
 
         let res = self
             .retry(|| async {
@@ -171,7 +171,7 @@ impl Database {
             return Ok(());
         }
 
-        let stmt = CurrentDialect::ensure_image_statement();
+        let stmt = CurrentDialect::ensure_image_statement(self.schema.as_deref());
 
         self.retry(|| async {
             let query = sqlx::query(&stmt).bind(hash.clone().to_string());
@@ -207,7 +207,7 @@ impl Database {
     ) -> Result<(), DatabaseError> {
         self.ensure_image(hash).await?;
 
-        let stmt = CurrentDialect::ensure_metadata_statement();
+        let stmt = CurrentDialect::ensure_metadata_statement(self.schema.as_deref());
 
         self.retry(|| async {
             let query = sqlx::query(&stmt)
@@ -246,7 +246,7 @@ impl Database {
     ///
     /// A `Result` indicating success or failure.
     pub async fn ensure_tags(&self, tags: &[&str]) -> Result<(), DatabaseError> {
-        let stmt = CurrentDialect::ensure_tag_statement();
+        let stmt = CurrentDialect::ensure_tag_statement(self.schema.as_deref());
 
         self.retry(|| async {
             let mut tx = self
@@ -296,7 +296,7 @@ impl Database {
         self.ensure_image(hash).await?;
         self.ensure_tags(tags).await?;
 
-        let stmt = CurrentDialect::ensure_image_tag_statement();
+        let stmt = CurrentDialect::ensure_image_tag_statement(self.schema.as_deref());
 
         self.retry(|| async {
             let mut tx = self
@@ -347,7 +347,7 @@ impl Database {
     ) -> Result<(), DatabaseError> {
         self.ensure_image(hash).await?;
 
-        let stmt = CurrentDialect::update_source_statement();
+        let stmt = CurrentDialect::update_source_statement(self.schema.as_deref());
 
         self.retry(|| async {
             let query = sqlx::query(&stmt)
@@ -382,8 +382,8 @@ impl Database {
     ///
     /// A `Result` containing a vector of image hashes that match the query.
     pub async fn query_image(&self, query: ImageQuery) -> Result<Vec<PixelHash>, DatabaseError> {
-        let (sql, params) = query.to_sql();
-        let stmt = CurrentDialect::query_image_statement(sql);
+        let (sql, params) = query.to_sql(self.schema.as_deref());
+        let stmt = CurrentDialect::query_image_statement(self.schema.as_deref(), sql);
 
         let hashes = self
             .retry(|| async {
@@ -419,8 +419,8 @@ impl Database {
     ///
     /// A `Result` containing the count of images that match the query.
     pub async fn count_image(&self, query: ImageQuery) -> Result<u64, DatabaseError> {
-        let (sql, params) = query.to_sql();
-        let stmt = CurrentDialect::count_image_statement(sql);
+        let (sql, params) = query.to_sql(self.schema.as_deref());
+        let stmt = CurrentDialect::count_image_statement(self.schema.as_deref(), sql);
 
         let count = self
             .retry(|| async {
@@ -430,13 +430,17 @@ impl Database {
                     q = q.bind(param);
                 }
 
-                q.fetch_one(&self.pool)
-                    .await
-                    .map_err(|e| DatabaseError::QueryFailed {
-                        operation: DbOperation::QueryImages,
-                        sql: stmt.to_string(),
-                        source: e,
-                    })
+                // cast into signed because some DBs do not support unsigned types.
+                let count: i64 =
+                    q.fetch_one(&self.pool)
+                        .await
+                        .map_err(|e| DatabaseError::QueryFailed {
+                            operation: DbOperation::QueryImages,
+                            sql: stmt.to_string(),
+                            source: e,
+                        })?;
+
+                Ok(count as u64)
             })
             .await?;
 
@@ -460,20 +464,23 @@ impl Database {
     /// count of images associated with the given tag. If an error occurs
     /// during the query execution, the `Result` will contain a `DatabaseError`.
     pub async fn count_image_by_tag(&self, tag: &str) -> Result<u64, DatabaseError> {
-        let stmt = CurrentDialect::count_image_by_tag_statement();
+        let stmt = CurrentDialect::count_image_by_tag_statement(self.schema.as_deref());
 
         let count = self
             .retry(|| async {
                 let q = sqlx::query_scalar(&stmt).bind(tag);
 
-                q.fetch_optional(&self.pool)
+                let count: i64 = q
+                    .fetch_optional(&self.pool)
                     .await
                     .map(|r| r.unwrap_or_default())
                     .map_err(|e| DatabaseError::QueryFailed {
                         operation: DbOperation::QueryImages,
                         sql: stmt.to_string(),
                         source: e,
-                    })
+                    })?;
+
+                Ok(count as u64)
             })
             .await?;
 
@@ -494,18 +501,28 @@ impl Database {
     /// On success, it returns `Ok(())`. On failure, it returns a `DatabaseError` with context
     /// about the failed operation.
     pub async fn refresh_image_count(&self) -> Result<(), DatabaseError> {
-        let stmt = CurrentDialect::refresh_tag_counts_statement();
-
         self.retry(|| async {
-            let q = sqlx::query(stmt);
-
-            q.execute(&self.pool)
+            let mut tx = self
+                .pool
+                .begin()
                 .await
-                .map_err(|e| DatabaseError::QueryFailed {
-                    operation: DbOperation::QueryImages,
-                    sql: stmt.to_string(),
-                    source: e,
-                })
+                .map_err(|e| DatabaseError::TransactionFailed { source: e })?;
+
+            for stmt in CurrentDialect::refresh_tag_counts_statement(self.schema.as_deref()) {
+                let q = sqlx::query(&stmt);
+
+                q.execute(&mut *tx)
+                    .await
+                    .map_err(|e| DatabaseError::QueryFailed {
+                        operation: DbOperation::QueryImages,
+                        sql: stmt.to_string(),
+                        source: e,
+                    })?;
+            }
+
+            tx.commit()
+                .await
+                .map_err(|e| DatabaseError::TransactionFailed { source: e })
         })
         .await?;
 
@@ -523,7 +540,7 @@ impl Database {
     /// A `Result` containing a vector of tag strings that match the query.
     pub async fn query_tags(&self, query: TagQuery) -> Result<Vec<String>, DatabaseError> {
         let (sql, params) = query.to_sql();
-        let stmt = CurrentDialect::query_tag_statement(sql);
+        let stmt = CurrentDialect::query_tag_statement(self.schema.as_deref(), sql);
 
         let hashes = self
             .retry(|| async {
@@ -558,7 +575,7 @@ impl Database {
     ///
     /// A `Result` containing a vector of tag strings associated with the image.
     pub async fn get_tags(&self, hash: &PixelHash) -> Result<Vec<String>, DatabaseError> {
-        let stmt = CurrentDialect::query_tags_by_image_statement();
+        let stmt = CurrentDialect::query_tags_by_image_statement(self.schema.as_deref());
 
         let rows = self
             .retry(|| async {
@@ -591,7 +608,7 @@ impl Database {
         &self,
         hash: &PixelHash,
     ) -> Result<Option<ImageMetadata>, DatabaseError> {
-        let stmt = CurrentDialect::query_metadata_statement();
+        let stmt = CurrentDialect::query_metadata_statement(self.schema.as_deref());
 
         let metadata: Option<ImageMetadata> = self
             .retry(|| async {
@@ -621,7 +638,7 @@ impl Database {
     /// A `Result` containing an `Option` of the source string.
     /// The `Option` will be `None` if the source is not found.
     pub async fn get_source(&self, hash: &PixelHash) -> Result<Option<String>, DatabaseError> {
-        let stmt = CurrentDialect::query_source_statement();
+        let stmt = CurrentDialect::query_source_statement(self.schema.as_deref());
 
         let soruce: Option<String> = self
             .retry(|| async {
@@ -657,7 +674,7 @@ impl Database {
         hash: &PixelHash,
         tags: &[&str],
     ) -> Result<(), DatabaseError> {
-        let stmt = CurrentDialect::delete_image_tag_statement();
+        let stmt = CurrentDialect::delete_image_tag_statement(self.schema.as_deref());
 
         self.retry(|| async {
             let mut tx = self
@@ -707,8 +724,8 @@ impl Database {
     ///
     /// A `Result` indicating success or failure.
     pub async fn ensure_image_removed(&self, hash: &PixelHash) -> Result<(), DatabaseError> {
-        let stmt_tags = CurrentDialect::delete_tags_by_image_statement();
-        let stmt_image = CurrentDialect::delete_image_statement();
+        let stmt_tags = CurrentDialect::delete_tags_by_image_statement(self.schema.as_deref());
+        let stmt_image = CurrentDialect::delete_image_statement(self.schema.as_deref());
 
         self.retry(|| async {
             let mut tx = self
@@ -753,7 +770,7 @@ impl Database {
 #[derive(Debug, Error)]
 pub enum DatabaseError {
     /// A general SQL query failure, with full context including operation, SQL and parameters.
-    #[error("Query failed during {operation:?}: sql={sql}")]
+    #[error("Query failed during {operation:?}: sql={sql} source={source}")]
     QueryFailed {
         operation: DbOperation,
         sql: String,
@@ -762,7 +779,7 @@ pub enum DatabaseError {
     },
 
     /// A failure to begin or commit a transaction.
-    #[error("Failed to operate transaction")]
+    #[error("Failed to operate transaction: source={source}")]
     TransactionFailed {
         #[source]
         source: sqlx::Error,
@@ -860,16 +877,53 @@ impl DatabaseError {
 #[cfg(test)]
 mod tests {
     use crate::{
-        database::{Database, Db, Pool},
+        database::{Database, Pool},
+        dialect::Db,
         query::{ImageQuery, ImageQueryExpr, ImageQueryKind, TagQuery, TagQueryExpr, TagQueryKind},
         storage::{ImageMetadata, PixelHash},
     };
     use chrono::DateTime;
     use std::str::FromStr;
 
-    /// Returns an in-memory SQLite connection pool for testing.
-    async fn get_pool() -> Pool<Db> {
-        Pool::connect(":memory:").await.unwrap()
+    #[cfg(all(feature = "postgres", not(feature = "sqlite")))]
+    async fn drop_schema(pool: sqlx::Pool<Db>, schema: Option<&str>) -> Result<(), sqlx::Error> {
+        if let Some(schema) = schema {
+            sqlx::query(&format!("DROP SCHEMA {} CASCADE", schema))
+                .execute(&pool)
+                .await?;
+        }
+
+        Ok(())
+    }
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    async fn drop_schema(_pool: sqlx::Pool<Db>, _schema: Option<&str>) -> Result<(), sqlx::Error> {
+        Ok(())
+    }
+
+    #[cfg(all(feature = "postgres", not(feature = "sqlite")))]
+    async fn get_db() -> Database {
+        let conn = "postgres://postgres:password@db/devdb";
+
+        let pool = Pool::connect(conn).await.unwrap();
+        let schema = format!("test_{}", uuid::Uuid::new_v4().to_string().replace("-", ""));
+
+        let db = Database::new(pool).with_schema(&schema);
+        db.migrate().await.unwrap();
+
+        db
+    }
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    async fn get_db() -> Database {
+        let conn = ":memory:";
+
+        let pool = Pool::connect(conn).await.unwrap();
+
+        let db = Database::new(pool);
+        db.migrate().await.unwrap();
+
+        db
     }
 
     /// Verifies that `Database::with_migration` can be called multiple times
@@ -879,10 +933,12 @@ mod tests {
     /// does not fail or break schema assumptions.
     #[tokio::test]
     async fn test_migration_idempotency() {
-        let pool = get_pool().await;
+        let db = get_db().await;
 
-        Database::with_migration(pool.clone()).await.unwrap();
-        Database::with_migration(pool.clone()).await.unwrap();
+        db.migrate().await.unwrap();
+        db.migrate().await.unwrap();
+
+        drop_schema(db.pool, db.schema.as_deref()).await.unwrap();
     }
 
     /// Ensures that the same image can be inserted multiple times without causing an error.
@@ -891,13 +947,15 @@ mod tests {
     /// that `ensure_image` executes successfully even if the image already exists in the database.
     #[tokio::test]
     async fn test_ensure_image() {
-        let pool = get_pool().await;
-        let db = Database::with_migration(pool.clone()).await.unwrap();
+        let db = get_db().await;
+        db.migrate().await.unwrap();
 
         let image = PixelHash::try_from("329435e5e66be809").unwrap();
 
-        assert!(db.ensure_image(&image).await.is_ok());
-        assert!(db.ensure_image(&image).await.is_ok());
+        db.ensure_image(&image).await.unwrap();
+        db.ensure_image(&image).await.unwrap();
+
+        drop_schema(db.pool, db.schema.as_deref()).await.unwrap();
     }
 
     /// Ensures that an image can have an associated source and that it can be correctly retrieved.
@@ -906,16 +964,19 @@ mod tests {
     /// ensures that this data can be accurately retrieved afterwards.
     #[tokio::test]
     async fn test_ensure_source() {
-        let pool = get_pool().await;
-        let db = Database::with_migration(pool.clone()).await.unwrap();
+        let db = get_db().await;
+        db.migrate().await.unwrap();
 
         let image = PixelHash::try_from("329435e5e66be809").unwrap();
 
-        assert!(db.ensure_image_has_source(&image, "src").await.is_ok());
+        db.ensure_image_has_source(&image, "src").await.unwrap();
+
         assert_eq!(
             Some("src".to_string()),
             db.get_source(&image).await.unwrap()
         );
+
+        drop_schema(db.pool, db.schema.as_deref()).await.unwrap();
     }
 
     /// Ensures that inserting the same metadata multiple times does not result in an error.
@@ -924,8 +985,8 @@ mod tests {
     /// confirming that `ensure_image_has_metadata` can be executed on existing metadata without errors.
     #[tokio::test]
     async fn test_ensure_metadata() {
-        let pool = get_pool().await;
-        let db = Database::with_migration(pool.clone()).await.unwrap();
+        let db = get_db().await;
+        db.migrate().await.unwrap();
 
         let image = PixelHash::try_from("329435e5e66be809").unwrap();
         let metadata = ImageMetadata {
@@ -937,18 +998,17 @@ mod tests {
             created_at: Some(DateTime::from_str("2025-05-02T01:18:49.678809123Z").unwrap()),
             duration: Some(1.0),
         };
-        assert!(
-            db.ensure_image_has_metadata(&image, &metadata)
-                .await
-                .is_ok()
-        );
-        assert!(
-            db.ensure_image_has_metadata(&image, &metadata)
-                .await
-                .is_ok()
-        );
+
+        db.ensure_image_has_metadata(&image, &metadata)
+            .await
+            .unwrap();
+        db.ensure_image_has_metadata(&image, &metadata)
+            .await
+            .unwrap();
 
         assert_eq!(Some(metadata), db.get_metadata(&image).await.unwrap());
+
+        drop_schema(db.pool, db.schema.as_deref()).await.unwrap();
     }
 
     /// Ensures that metadata can be inserted and retrieved correctly without a `created_at` value.
@@ -957,8 +1017,8 @@ mod tests {
     /// that lack a `created_at` field.
     #[tokio::test]
     async fn test_ensure_metadata_without_created_at() {
-        let pool = get_pool().await;
-        let db = Database::with_migration(pool.clone()).await.unwrap();
+        let db = get_db().await;
+        db.migrate().await.unwrap();
 
         let image = PixelHash::try_from("329435e5e66be809").unwrap();
         let metadata = ImageMetadata {
@@ -970,12 +1030,12 @@ mod tests {
             created_at: None,
             duration: None,
         };
-        assert!(
-            db.ensure_image_has_metadata(&image, &metadata)
-                .await
-                .is_ok()
-        );
+        db.ensure_image_has_metadata(&image, &metadata)
+            .await
+            .unwrap();
         assert!(db.get_metadata(&image).await.unwrap().is_some());
+
+        drop_schema(db.pool, db.schema.as_deref()).await.unwrap();
     }
 
     /// Performs a comprehensive test of image tag operations including:
@@ -985,8 +1045,8 @@ mod tests {
     /// - Verifying the final list of tags.
     #[tokio::test]
     async fn test_operate_image_tag() {
-        let pool = get_pool().await;
-        let db = Database::with_migration(pool.clone()).await.unwrap();
+        let db = get_db().await;
+        db.migrate().await.unwrap();
 
         let image = PixelHash::try_from("329435e5e66be809").unwrap();
 
@@ -1002,11 +1062,13 @@ mod tests {
         );
 
         // Remove "dog" tag twice (should be safe and idempotent)
-        assert!(db.ensure_tags_removed(&image, &["dog"]).await.is_ok());
-        assert!(db.ensure_tags_removed(&image, &["dog"]).await.is_ok());
+        db.ensure_tags_removed(&image, &["dog"]).await.unwrap();
+        db.ensure_tags_removed(&image, &["dog"]).await.unwrap();
 
         // Confirm only "cat" remains
         assert_eq!(vec!["cat".to_string()], db.get_tags(&image).await.unwrap());
+
+        drop_schema(db.pool, db.schema.as_deref()).await.unwrap();
     }
 
     /// Tests image querying based on tags, verifying that images are returned
@@ -1016,8 +1078,8 @@ mod tests {
     /// "dog", and "cat and dog" parameters.
     #[tokio::test]
     async fn test_query_image() {
-        let pool = get_pool().await;
-        let db = Database::with_migration(pool.clone()).await.unwrap();
+        let db = get_db().await;
+        db.migrate().await.unwrap();
 
         let image_cat = PixelHash::try_from("329435e5e66be809").unwrap();
         let image_dog = PixelHash::try_from("229435e5e66be809").unwrap();
@@ -1042,20 +1104,19 @@ mod tests {
             ImageQueryExpr::tag("cat").and(ImageQueryExpr::tag("dog")),
         ));
 
-        assert_eq!(
-            vec![image_cat_and_dog.clone(), image_cat.clone()],
-            db.query_image(query_cat).await.unwrap()
-        );
+        let mut res = db.query_image(query_cat).await.unwrap();
+        res.sort();
+        assert_eq!(vec![image_cat_and_dog.clone(), image_cat.clone()], res);
 
-        assert_eq!(
-            vec![image_cat_and_dog.clone(), image_dog.clone(),],
-            db.query_image(query_dog).await.unwrap()
-        );
+        let mut res = db.query_image(query_dog).await.unwrap();
+        res.sort();
+        assert_eq!(vec![image_cat_and_dog.clone(), image_dog.clone(),], res);
 
-        assert_eq!(
-            vec![image_cat_and_dog],
-            db.query_image(query_cat_and_dog).await.unwrap()
-        );
+        let mut res = db.query_image(query_cat_and_dog).await.unwrap();
+        res.sort();
+        assert_eq!(vec![image_cat_and_dog], res);
+
+        drop_schema(db.pool, db.schema.as_deref()).await.unwrap();
     }
 
     /// Tests the image counting functionality based on specific query criteria,
@@ -1065,8 +1126,8 @@ mod tests {
     /// images associated with "cat", "dog", and both "cat and dog" tags.
     #[tokio::test]
     async fn test_count_image() {
-        let pool = get_pool().await;
-        let db = Database::with_migration(pool.clone()).await.unwrap();
+        let db = get_db().await;
+        db.migrate().await.unwrap();
 
         let image_cat = PixelHash::try_from("329435e5e66be809").unwrap();
         let image_dog = PixelHash::try_from("229435e5e66be809").unwrap();
@@ -1089,12 +1150,14 @@ mod tests {
         assert_eq!(2, db.count_image(query_cat).await.unwrap());
         assert_eq!(2, db.count_image(query_dog).await.unwrap());
         assert_eq!(1, db.count_image(query_cat_and_dog).await.unwrap());
+
+        drop_schema(db.pool, db.schema.as_deref()).await.unwrap();
     }
 
     #[tokio::test]
     async fn test_count_image_by_tag() {
-        let pool = get_pool().await;
-        let db = Database::with_migration(pool.clone()).await.unwrap();
+        let db = get_db().await;
+        db.migrate().await.unwrap();
 
         let image_cat = PixelHash::try_from("329435e5e66be809").unwrap();
         let image_dog = PixelHash::try_from("229435e5e66be809").unwrap();
@@ -1112,6 +1175,7 @@ mod tests {
 
         assert_eq!(2, db.count_image_by_tag("cat").await.unwrap());
         assert_eq!(2, db.count_image_by_tag("dog").await.unwrap());
+        drop_schema(db.pool, db.schema.as_deref()).await.unwrap();
     }
 
     /// Tests the querying of tags ensuring they can be accurately retrieved based on different query types.
@@ -1119,8 +1183,8 @@ mod tests {
     /// This confirms the correct behavior for exact match, containment, and retrieval of all tag entries.
     #[tokio::test]
     async fn test_query_tags() {
-        let pool = get_pool().await;
-        let db = Database::with_migration(pool.clone()).await.unwrap();
+        let db = get_db().await;
+        db.migrate().await.unwrap();
 
         assert!(db.ensure_tags(&["cat"]).await.is_ok());
         assert!(db.ensure_tags(&["dog"]).await.is_ok());
@@ -1148,5 +1212,6 @@ mod tests {
             vec!["cat".to_string()],
             db.query_tags(query_contains_ca).await.unwrap()
         );
+        drop_schema(db.pool, db.schema.as_deref()).await.unwrap();
     }
 }
