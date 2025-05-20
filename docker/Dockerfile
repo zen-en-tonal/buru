@@ -1,6 +1,6 @@
-ARG BUILD_FEATURES=sqlite
+FROM rust:slim AS builder
 
-FROM rust:slim as builder
+ARG BUILD_FEATURES=sqlite
 
 WORKDIR /app
 COPY . .
