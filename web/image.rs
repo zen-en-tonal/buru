@@ -209,11 +209,6 @@ impl ImageResponse {
             .unwrap_or_default();
         let variants = generate_variants(&config, &value);
         let asset = MediaAsset::from_image(&value, &variants);
-        let largefile_url = if value.metadata.duration.is_some() {
-            variants.orig.url.clone()
-        } else {
-            variants.large.url.clone()
-        };
 
         ImageResponse {
             id: value.hash.clone().to_signed(),
