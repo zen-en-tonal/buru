@@ -233,7 +233,7 @@ impl ImageResponse {
             pixiv_id: None,
             source: value.source.unwrap_or_default(),
             md5: Some(value.hash.to_string()),
-            large_file_url: Some(largefile_url),
+            large_file_url: Some(variants.large.url),
             preview_file_url: Some(variants.preview.url),
             file_ext: value.metadata.format,
             file_size: value.metadata.file_size as u32,
