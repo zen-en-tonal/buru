@@ -73,7 +73,13 @@ pub async fn get_tags(
             .unwrap_or(TagQueryKind::All),
     )
     .with_limit(params.limit.unwrap_or(20))
-    .with_offset((params.page.unwrap_or(1) - 1) * params.limit.unwrap_or(20));
+    .with_offset(
+        params
+            .page
+            .unwrap_or(1)
+            .saturating_sub(1)
+            * params.limit.unwrap_or(20),
+    );
 
     let tags = query_tags(&app.db, query).await?;
     let tags: Vec<&str> = tags.iter().map(|s| s.as_str()).collect();
