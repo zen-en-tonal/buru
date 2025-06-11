@@ -295,7 +295,13 @@ impl From<ImageQueryParam> for query::ImageQuery {
                 .map(ImageQueryKind::Where)
                 .unwrap_or(ImageQueryKind::All),
             limit: value.limit.or(Some(20)),
-            offset: Some((value.page.unwrap_or(1) - 1) * value.limit.unwrap_or(20)),
+            offset: Some(
+                value
+                    .page
+                    .unwrap_or(1)
+                    .saturating_sub(1)
+                    * value.limit.unwrap_or(20),
+            ),
             order: order_by.or(Some(OrderBy::CreatedAtDesc)),
         }
     }
