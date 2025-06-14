@@ -396,6 +396,17 @@ pub async fn put_tags(
     )))
 }
 
+pub async fn delete_image(
+    State(app): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, ImageError> {
+    let hash = PixelHash::from_signed(id);
+
+    remove_image(&app.storage, &app.db, hash).await?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
 pub enum ImageError {
     App(AppError),
 

@@ -4,8 +4,8 @@ mod tag;
 use axum::extract::{DefaultBodyLimit, Path, State};
 use axum::http::{Response, StatusCode};
 use axum::response::IntoResponse;
-use axum::routing::put;
-use axum::{Router, routing::get};
+use axum::routing::{get, put, delete};
+use axum::Router;
 use buru::{database::Database, storage::Storage};
 use sqlx::Pool;
 use std::{env, fs};
@@ -90,7 +90,7 @@ async fn main() {
 
     let app = Router::new()
         .route("/images", get(image::get_images).post(image::post_image))
-        .route("/images/{id}", get(image::get_image))
+        .route("/images/{id}", get(image::get_image).delete(image::delete_image))
         .route("/images/{id}/tags", put(image::put_tags))
         .route("/tags", get(tag::get_tags))
         .route("/tags/suggest", get(tag::suggest_tags))
