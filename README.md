@@ -2,94 +2,109 @@
 
 [![docs.rs](https://docs.rs/buru/badge.svg)](https://docs.rs/buru)
 
-This project provides a comprehensive system for managing and archiving images, offering a robust CLI and a web interface to efficiently store images, extract metadata, and handle database interactions. The application is built in Rust and utilizes asynchronous processing to ensure high performance and scalability.
-
-## Overview
-
-The system consists of two main components:
-- **CLI Application**: Enables users to archive images via command line, adding metadata and tags.
-- **Web Interface**: Provides a RESTful API for interacting with the archival system programmatically.
+`buru` is a Rust application that lets you archive and tag images either from the command line or through a small web API.  It stores image metadata in a database and exposes convenient tools for managing that data.
 
 ## Features
 
-- **Image Storage**: Efficiently handles image storage with metadata extraction and tagging capabilities.
-- **Database Integration**: Uses SQLite for storing image metadata, tags, and source information.
-- **Tagging System**: Supports tagging images to facilitate easy searching and categorization.
-- **Asynchronous Execution**: Leverages async features of Rust for non-blocking operations.
-- **Docker Support**: Containerization of the application with Docker for easy deployment.
+- **CLI** for archiving images and adding tags
+- **Web server** exposing a REST API for programmatic access
+- **SQLite** database integration (optional PostgreSQL via feature flag)
+- **Asynchronous** processing for good runtime performance
+- **Docker** configuration for easy deployment
 
-## Setup
+## Quick start
 
-### Prerequisites
+### Requirements
 
-- [Rust](https://www.rust-lang.org/tools/install) for building the project.
-- [Docker](https://www.docker.com/get-started) for running the application in containers.
-- [SQLite](https://www.sqlite.org/download.html) database for metadata storage.
+- [Rust](https://www.rust-lang.org/tools/install)
+- [Docker](https://www.docker.com/get-started) (optional for container use)
 
-### Installation
+### Build and run
 
-1. **Clone the repository:**
-
-   ```bash
-   git clone <repository-url>
-   cd image-archival-system
-   ```
-
-2. **Build the project:**
-
-   ```bash
-   cargo build --release
-   ```
-
-3. **Run the CLI or Web Server:**
-
-   - **CLI**: Execute image archival commands.
-     ```bash
-     cargo run --bin cli
-     ```
-
-   - **Web Server**: Start the RESTful API.
-     ```bash
-     cargo run --bin web
-     ```
-
-4. **Docker**: Optionally, build and run using Docker.
-
-   - Build Docker Image:
-
-     ```bash
-     docker-compose build
-     ```
-
-   - Run with Docker Compose:
-
-     ```bash
-     docker-compose up
-     ```
-
-## Usage
-
-### CLI Application
-
-To archive an image using the CLI:
+Clone the repository and build the project:
 
 ```bash
-cargo run --bin cli -- archive --path /path/to/image.jpg --tags "nature sunset" --source "http://example.com/source"
+git clone https://github.com/zen-en-tonal/buru.git
+cd buru
+cargo build --release
 ```
 
-### Web Interface
+Run the CLI to archive images:
 
-The web interface provides endpoints to archive images, retrieve metadata, and manage tags. Start the server and access the API documentation at `[localhost:3000]`.
+```bash
+cargo run --bin cli -- archive --path /path/to/image.jpg --tags "nature sunset"
+```
 
-#### Example
+Start the web server (listens on port 3000 by default):
 
-- **GET /images**: Fetch all archived images.
-- **POST /images**: Upload and archive a new image.
+```bash
+cargo run --bin web
+```
 
-### Docker Deployment
+### Docker
 
-The application can be easily deployed using Docker. Use the provided `docker-compose.yml` to manage services. This setup includes both the application server and a reverse proxy using Nginx.
+A `docker-compose.yml` file is provided. To build and start all services:
+
+```bash
+docker-compose build
+docker-compose up
+```
 
 ## License
 
-This project is licensed under the MIT License. See the `LICENSE` file for more details.
+This project is licensed under the MIT OR Apache-2.0 license. See the `LICENSE` file for details.
+
+## Web API
+
+The web server exposes a small REST-style API that returns JSON. Endpoints are
+listed below using the default port `3000`.
+
+### `GET /images`
+
+List images. Query parameters:
+
+- `tags` &ndash; space separated tag query
+- `page` &ndash; page number (default 1)
+- `limit` &ndash; results per page (default 20)
+
+### `GET /images/{id}`
+
+Retrieve metadata for a single image by numeric identifier.
+
+### `POST /images`
+
+Upload a new image using `multipart/form-data` with these fields:
+
+- `file` &ndash; binary file contents (required)
+- `tags` &ndash; space separated tags (optional)
+- `source` &ndash; original source URL (optional)
+
+### `PUT /images/{id}/tags`
+
+Replace all tags for the image identified by `id`. Supply new tags via the
+`tags` query parameter (e.g. `?tags=cute+cat`).
+
+### `DELETE /images/{id}`
+
+Remove an image and its metadata.
+
+### `GET /tags`
+
+List tags. Supports the following query parameters:
+
+- `search[name_comma]` &ndash; comma separated tag names to match
+- `page` and `limit` &ndash; pagination controls
+
+### `GET /tags/suggest`
+
+Suggest tags by prefix. Use `search[query]` to supply the prefix and `limit` to
+cap results.
+
+### `PUT /refresh/tag_counts`
+
+Recompute stored counts for all tags.
+
+### `GET /files/{vari}/{hash}`
+
+Fetch an image file. The `{vari}` segment is one of the generated variants
+(`original`, `sample`, `180x180`, etc.) and `{hash}` is the image file path.
