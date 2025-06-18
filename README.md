@@ -50,10 +50,6 @@ docker-compose build
 docker-compose up
 ```
 
-## License
-
-This project is licensed under the MIT OR Apache-2.0 license. See the `LICENSE` file for details.
-
 ## Web API
 
 The web server exposes a small REST-style API that returns JSON. Endpoints are
@@ -108,3 +104,8 @@ Recompute stored counts for all tags.
 
 Fetch an image file. The `{vari}` segment is one of the generated variants
 (`original`, `sample`, `180x180`, etc.) and `{hash}` is the image file path.
+
+## License
+
+This project is licensed under the MIT OR Apache-2.0 license. See the `LICENSE` file for details.
+
