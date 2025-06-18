@@ -4,7 +4,7 @@ mod tag;
 use axum::extract::{DefaultBodyLimit, Path, State};
 use axum::http::{Response, StatusCode};
 use axum::response::IntoResponse;
-use axum::routing::{get, put, delete};
+use axum::routing::{get, put};
 use axum::Router;
 use buru::{database::Database, storage::Storage};
 use sqlx::Pool;
