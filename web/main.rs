@@ -1,11 +1,11 @@
 mod image;
 mod tag;
 
+use axum::Router;
 use axum::extract::{DefaultBodyLimit, Path, State};
 use axum::http::{Response, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{get, put};
-use axum::Router;
 use buru::{database::Database, storage::Storage};
 use sqlx::Pool;
 use std::{env, fs};
@@ -18,7 +18,6 @@ pub struct AppConfig {
     pub image_dir: PathBuf,
     pub port: u16,
     pub body_limit: usize,
-    pub schema: Option<String>,
 }
 
 impl AppConfig {
@@ -27,7 +26,6 @@ impl AppConfig {
 
         AppConfig {
             database_url: env::var("DATABASE_URL").expect("DATABASE_URL is required"),
-            schema: env::var("DATABASE_SCHEMA").ok(),
             cdn_base_url: env::var("CDN_BASE_URL")
                 .unwrap_or_else(|_| "http://localhost:3000/files".to_string())
                 .into(),
@@ -58,7 +56,6 @@ impl AppConfig {
     pub async fn into_state(self) -> AppState {
         let db = Database {
             pool: Pool::connect(&self.database_url).await.unwrap(),
-            schema: self.schema.clone(),
         };
         db.migrate().await.unwrap();
 
@@ -90,7 +87,10 @@ async fn main() {
 
     let app = Router::new()
         .route("/images", get(image::get_images).post(image::post_image))
-        .route("/images/{id}", get(image::get_image).delete(image::delete_image))
+        .route(
+            "/images/{id}",
+            get(image::get_image).delete(image::delete_image),
+        )
         .route("/images/{id}/tags", put(image::put_tags))
         .route("/tags", get(tag::get_tags))
         .route("/tags/suggest", get(tag::suggest_tags))

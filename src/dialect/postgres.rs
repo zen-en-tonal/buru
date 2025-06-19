@@ -1,5 +1,4 @@
-use super::{Db, Dialect};
-use crate::dialect::qualify;
+use super::Dialect;
 
 /// Postgres dialect implementation of the `Dialect` trait.
 pub struct PostgresDialect;
@@ -9,28 +8,25 @@ impl Dialect for PostgresDialect {
         format!("${idx}")
     }
 
-    fn ensure_image_statement(schema: Option<&str>) -> String {
+    fn ensure_image_statement() -> String {
         format!(
-            "INSERT INTO {} (hash) VALUES ({}) ON CONFLICT DO NOTHING",
-            qualify(schema, "images"),
+            "INSERT INTO images (hash) VALUES ({}) ON CONFLICT DO NOTHING",
             Self::placeholder(1)
         )
     }
 
-    fn ensure_tag_statement(schema: Option<&str>) -> String {
+    fn ensure_tag_statement() -> String {
         format!(
-            "INSERT INTO {} (name) VALUES ({}) ON CONFLICT DO NOTHING",
-            qualify(schema, "tags"),
+            "INSERT INTO tags (name) VALUES ({}) ON CONFLICT DO NOTHING",
             Self::placeholder(1)
         )
     }
 
-    fn ensure_metadata_statement(schema: Option<&str>) -> String {
+    fn ensure_metadata_statement() -> String {
         format!(
-            r#"INSERT INTO {}
+            r#"INSERT INTO image_metadatas
             (image_hash, width, height, format, color_type, file_size, created_at, duration)
             VALUES ({}, {}, {}, {}, {}, {}, {}, {}) ON CONFLICT DO NOTHING"#,
-            qualify(schema, "image_metadatas"),
             Self::placeholder(1),
             Self::placeholder(2),
             Self::placeholder(3),
@@ -42,12 +38,11 @@ impl Dialect for PostgresDialect {
         )
     }
 
-    fn ensure_image_tag_statement(schema: Option<&str>) -> String {
+    fn ensure_image_tag_statement() -> String {
         format!(
-            "INSERT INTO {} (image_hash, tag_name) VALUES ({}, {}) ON CONFLICT DO NOTHING",
-            qualify(schema, "image_tags"),
+            "INSERT INTO image_tags (image_hash, tag_name) VALUES ({}, {}) ON CONFLICT DO NOTHING",
             Self::placeholder(1),
-            Self::placeholder(2),
+            Self::placeholder(2)
         )
-        }
+    }
 }

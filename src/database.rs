@@ -93,17 +93,11 @@ pub struct Database {
 
 impl Database {
     pub fn new(pool: sqlx::Pool<Db>) -> Self {
-        Self { pool, schema: None }
-    }
-
-    pub fn with_schema(mut self, schema: &str) -> Self {
-        self.schema = Some(schema.to_string());
-
-        self
-    }
+        Self { pool }
+        }
 
     pub async fn migrate(&self) -> Result<(), sqlx::Error> {
-        run_migration(&self.pool, self.schema.as_deref()).await
+        run_migration(&self.pool).await
     }
 
     async fn retry<F, Fut, T>(&self, mut op: F) -> Result<T, DatabaseError>
@@ -144,7 +138,7 @@ impl Database {
     ///
     /// On failure, it returns a `DatabaseError`.
     pub async fn image_exists(&self, hash: &PixelHash) -> Result<bool, DatabaseError> {
-        let stmt = CurrentDialect::exists_image(self.schema.as_deref());
+        let stmt = CurrentDialect::exists_image();
 
         let res = self
             .retry(|| async {
@@ -180,7 +174,7 @@ impl Database {
             return Ok(());
         }
 
-        let stmt = CurrentDialect::ensure_image_statement(self.schema.as_deref());
+        let stmt = CurrentDialect::ensure_image_statement();
 
         self.retry(|| async {
             let query = sqlx::query(&stmt).bind(hash.clone().to_string());
@@ -216,7 +210,7 @@ impl Database {
     ) -> Result<(), DatabaseError> {
         self.ensure_image(hash).await?;
 
-        let stmt = CurrentDialect::ensure_metadata_statement(self.schema.as_deref());
+        let stmt = CurrentDialect::ensure_metadata_statement();
 
         self.retry(|| async {
             let query = sqlx::query(&stmt)
@@ -255,7 +249,7 @@ impl Database {
     ///
     /// A `Result` indicating success or failure.
     pub async fn ensure_tags(&self, tags: &[&str]) -> Result<(), DatabaseError> {
-        let stmt = CurrentDialect::ensure_tag_statement(self.schema.as_deref());
+        let stmt = CurrentDialect::ensure_tag_statement();
 
         self.retry(|| async {
             let mut tx = self
@@ -305,7 +299,7 @@ impl Database {
         self.ensure_image(hash).await?;
         self.ensure_tags(tags).await?;
 
-        let stmt = CurrentDialect::ensure_image_tag_statement(self.schema.as_deref());
+        let stmt = CurrentDialect::ensure_image_tag_statement();
 
         self.retry(|| async {
             let mut tx = self
@@ -356,7 +350,7 @@ impl Database {
     ) -> Result<(), DatabaseError> {
         self.ensure_image(hash).await?;
 
-        let stmt = CurrentDialect::update_source_statement(self.schema.as_deref());
+        let stmt = CurrentDialect::update_source_statement();
 
         self.retry(|| async {
             let query = sqlx::query(&stmt)
@@ -391,8 +385,8 @@ impl Database {
     ///
     /// A `Result` containing a vector of image hashes that match the query.
     pub async fn query_image(&self, query: ImageQuery) -> Result<Vec<PixelHash>, DatabaseError> {
-        let (sql, params) = query.to_sql(self.schema.as_deref());
-        let stmt = CurrentDialect::query_image_statement(self.schema.as_deref(), sql);
+        let (sql, params) = query.to_sql();
+        let stmt = CurrentDialect::query_image_statement(sql);
 
         let hashes = self
             .retry(|| async {
@@ -428,8 +422,8 @@ impl Database {
     ///
     /// A `Result` containing the count of images that match the query.
     pub async fn count_image(&self, query: ImageQuery) -> Result<u64, DatabaseError> {
-        let (sql, params) = query.to_sql(self.schema.as_deref());
-        let stmt = CurrentDialect::count_image_statement(self.schema.as_deref(), sql);
+        let (sql, params) = query.to_sql();
+        let stmt = CurrentDialect::count_image_statement(sql);
 
         let count = self
             .retry(|| async {
@@ -473,7 +467,7 @@ impl Database {
     /// count of images associated with the given tag. If an error occurs
     /// during the query execution, the `Result` will contain a `DatabaseError`.
     pub async fn count_image_by_tag(&self, tag: &str) -> Result<u64, DatabaseError> {
-        let stmt = CurrentDialect::count_image_by_tag_statement(self.schema.as_deref());
+        let stmt = CurrentDialect::count_image_by_tag_statement();
 
         let count = self
             .retry(|| async {
@@ -517,7 +511,7 @@ impl Database {
                 .await
                 .map_err(|e| DatabaseError::TransactionFailed { source: e })?;
 
-            for stmt in CurrentDialect::refresh_tag_counts_statement(self.schema.as_deref()) {
+            for stmt in CurrentDialect::refresh_tag_counts_statement() {
                 let q = sqlx::query(&stmt);
 
                 q.execute(&mut *tx)
@@ -549,7 +543,7 @@ impl Database {
     /// A `Result` containing a vector of tag strings that match the query.
     pub async fn query_tags(&self, query: TagQuery) -> Result<Vec<String>, DatabaseError> {
         let (sql, params) = query.to_sql();
-        let stmt = CurrentDialect::query_tag_statement(self.schema.as_deref(), sql);
+        let stmt = CurrentDialect::query_tag_statement(sql);
 
         let hashes = self
             .retry(|| async {
@@ -584,7 +578,7 @@ impl Database {
     ///
     /// A `Result` containing a vector of tag strings associated with the image.
     pub async fn get_tags(&self, hash: &PixelHash) -> Result<Vec<String>, DatabaseError> {
-        let stmt = CurrentDialect::query_tags_by_image_statement(self.schema.as_deref());
+        let stmt = CurrentDialect::query_tags_by_image_statement();
 
         let rows = self
             .retry(|| async {
@@ -617,7 +611,7 @@ impl Database {
         &self,
         hash: &PixelHash,
     ) -> Result<Option<ImageMetadata>, DatabaseError> {
-        let stmt = CurrentDialect::query_metadata_statement(self.schema.as_deref());
+        let stmt = CurrentDialect::query_metadata_statement();
 
         let metadata: Option<ImageMetadata> = self
             .retry(|| async {
@@ -647,7 +641,7 @@ impl Database {
     /// A `Result` containing an `Option` of the source string.
     /// The `Option` will be `None` if the source is not found.
     pub async fn get_source(&self, hash: &PixelHash) -> Result<Option<String>, DatabaseError> {
-        let stmt = CurrentDialect::query_source_statement(self.schema.as_deref());
+        let stmt = CurrentDialect::query_source_statement();
 
         let soruce: Option<String> = self
             .retry(|| async {
@@ -683,7 +677,7 @@ impl Database {
         hash: &PixelHash,
         tags: &[&str],
     ) -> Result<(), DatabaseError> {
-        let stmt = CurrentDialect::delete_image_tag_statement(self.schema.as_deref());
+        let stmt = CurrentDialect::delete_image_tag_statement();
 
         self.retry(|| async {
             let mut tx = self
@@ -733,8 +727,8 @@ impl Database {
     ///
     /// A `Result` indicating success or failure.
     pub async fn ensure_image_removed(&self, hash: &PixelHash) -> Result<(), DatabaseError> {
-        let stmt_tags = CurrentDialect::delete_tags_by_image_statement(self.schema.as_deref());
-        let stmt_image = CurrentDialect::delete_image_statement(self.schema.as_deref());
+        let stmt_tags = CurrentDialect::delete_tags_by_image_statement();
+        let stmt_image = CurrentDialect::delete_image_statement();
 
         self.retry(|| async {
             let mut tx = self
