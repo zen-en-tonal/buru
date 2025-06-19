@@ -437,64 +437,20 @@ pub enum AppError {
 mod tests {
     use crate::{
         app::{ArchiveImageCommand, attach_tags, find_image_by_hash, query_image, remove_image},
-        database::{Database, Pool},
-        dialect::Db,
+        database::{Database, MIGRATOR, Pool},
         query::{ImageQuery, ImageQueryExpr, ImageQueryKind},
         storage::Storage,
     };
     use tempfile::TempDir;
-
-    #[cfg(all(feature = "postgres", not(feature = "sqlite")))]
-    async fn drop_schema(pool: sqlx::Pool<Db>, schema: Option<&str>) -> Result<(), sqlx::Error> {
-        if let Some(schema) = schema {
-            sqlx::query(&format!("DROP SCHEMA {} CASCADE", schema))
-                .execute(&pool)
-                .await?;
-        }
-
-        Ok(())
-    }
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    async fn drop_schema(_pool: sqlx::Pool<Db>, _schema: Option<&str>) -> Result<(), sqlx::Error> {
-        Ok(())
-    }
-
-    #[cfg(all(feature = "postgres", not(feature = "sqlite")))]
-    async fn get_db() -> Database {
-        use std::env;
-        let conn =
-            env::var("DATABASE_URL").unwrap_or("postgres://postgres:password@db/devdb".to_string());
-
-        let pool = Pool::connect(&conn).await.unwrap();
-        let schema = format!("test_{}", uuid::Uuid::new_v4().to_string().replace("-", ""));
-
-        let db = Database::new(pool).with_schema(&schema);
-        db.migrate().await.unwrap();
-
-        db
-    }
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    async fn get_db() -> Database {
-        let conn = ":memory:";
-
-        let pool = Pool::connect(conn).await.unwrap();
-
-        let db = Database::new(pool);
-        db.migrate().await.unwrap();
-
-        db
-    }
 
     fn get_storage() -> Storage {
         let tmp_dir = TempDir::new().unwrap();
         Storage::new(tmp_dir.path().to_path_buf())
     }
 
-    #[tokio::test]
-    async fn test_query() {
-        let db = get_db().await;
+    #[sqlx::test(migrator = "MIGRATOR")]
+    async fn test_query(pool: Pool) {
+        let db = Database::new(pool);
         let storage = get_storage();
         let file_bytes = include_bytes!("../testdata/44a5b6f94f4f6445.png");
 
@@ -510,13 +466,11 @@ mod tests {
         let res = query_image(&db, &storage, query).await.unwrap();
 
         dbg!(res);
-
-        drop_schema(db.pool, db.schema.as_deref()).await.unwrap();
     }
 
-    #[tokio::test]
-    async fn test_remove_image() {
-        let db = get_db().await;
+    #[sqlx::test(migrator = "MIGRATOR")]
+    async fn test_remove_image(pool: Pool) {
+        let db = Database::new(pool);
         let storage = get_storage();
         let file_bytes = include_bytes!("../testdata/44a5b6f94f4f6445.png");
 
@@ -528,13 +482,11 @@ mod tests {
             .unwrap();
 
         remove_image(&storage, &db, image.hash).await.unwrap();
-
-        drop_schema(db.pool, db.schema.as_deref()).await.unwrap();
     }
 
-    #[tokio::test]
-    async fn test_attach_tags() {
-        let db = get_db().await;
+    #[sqlx::test(migrator = "MIGRATOR")]
+    async fn test_attach_tags(pool: Pool) {
+        let db = Database::new(pool);
         let storage = get_storage();
         let file_bytes = include_bytes!("../testdata/44a5b6f94f4f6445.png");
 
@@ -544,6 +496,7 @@ mod tests {
             .execute(&storage, &db)
             .await
             .unwrap();
+
         let desired = &["cat", "cute"];
 
         attach_tags(&db, &storage, &image.hash, desired)
@@ -557,7 +510,5 @@ mod tests {
                 .unwrap()
                 .tags
         );
-
-        drop_schema(db.pool, db.schema.as_deref()).await.unwrap();
     }
 }
