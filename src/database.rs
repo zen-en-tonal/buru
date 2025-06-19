@@ -29,7 +29,6 @@ use crate::{
     storage::{ImageMetadata, PixelHash},
 };
 use chrono::{DateTime, Utc};
-pub use sqlx::Pool;
 use sqlx::{Execute, FromRow, Row};
 use std::str::FromStr;
 use thiserror::Error;
@@ -87,14 +86,13 @@ impl FromRow<'_, CurrentRow> for ImageMetadata {
 /// The implementation is SQL dialect agnostic and delegates syntax to `Dialect`.
 #[derive(Debug, Clone)]
 pub struct Database {
-    pub pool: Pool<Db>,
-    pub schema: Option<String>,
+    pub pool: Pool,
 }
 
 impl Database {
     pub fn new(pool: sqlx::Pool<Db>) -> Self {
         Self { pool }
-        }
+    }
 
     pub async fn migrate(&self) -> Result<(), sqlx::Error> {
         run_migration(&self.pool).await
@@ -880,97 +878,34 @@ impl DatabaseError {
 #[cfg(test)]
 mod tests {
     use crate::{
-        database::{Database, Pool},
-        dialect::Db,
+        database::{Database, MIGRATOR, Pool},
         query::{ImageQuery, ImageQueryExpr, ImageQueryKind, TagQuery, TagQueryExpr, TagQueryKind},
         storage::{ImageMetadata, PixelHash},
     };
     use chrono::DateTime;
     use std::str::FromStr;
 
-    #[cfg(all(feature = "postgres", not(feature = "sqlite")))]
-    async fn drop_schema(pool: sqlx::Pool<Db>, schema: Option<&str>) -> Result<(), sqlx::Error> {
-        if let Some(schema) = schema {
-            sqlx::query(&format!("DROP SCHEMA {} CASCADE", schema))
-                .execute(&pool)
-                .await?;
-        }
-
-        Ok(())
-    }
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    async fn drop_schema(_pool: sqlx::Pool<Db>, _schema: Option<&str>) -> Result<(), sqlx::Error> {
-        Ok(())
-    }
-
-    #[cfg(all(feature = "postgres", not(feature = "sqlite")))]
-    async fn get_db() -> Database {
-        use std::env;
-        let conn =
-            env::var("DATABASE_URL").unwrap_or("postgres://postgres:password@db/devdb".to_string());
-
-        let pool = Pool::connect(&conn).await.unwrap();
-        let schema = format!("test_{}", uuid::Uuid::new_v4().to_string().replace("-", ""));
-
-        let db = Database::new(pool).with_schema(&schema);
-        db.migrate().await.unwrap();
-
-        db
-    }
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    async fn get_db() -> Database {
-        let conn = ":memory:";
-
-        let pool = Pool::connect(conn).await.unwrap();
-
-        let db = Database::new(pool);
-        db.migrate().await.unwrap();
-
-        db
-    }
-
-    /// Verifies that `Database::with_migration` can be called multiple times
-    /// on the same pool without error.
-    ///
-    /// This confirms that migrations are idempotent — i.e., calling them again
-    /// does not fail or break schema assumptions.
-    #[tokio::test]
-    async fn test_migration_idempotency() {
-        let db = get_db().await;
-
-        db.migrate().await.unwrap();
-        db.migrate().await.unwrap();
-
-        drop_schema(db.pool, db.schema.as_deref()).await.unwrap();
-    }
-
     /// Ensures that the same image can be inserted multiple times without causing an error.
     ///
     /// This function tests both the success of the insertion and idempotency, confirming
     /// that `ensure_image` executes successfully even if the image already exists in the database.
-    #[tokio::test]
-    async fn test_ensure_image() {
-        let db = get_db().await;
-        db.migrate().await.unwrap();
+    #[sqlx::test(migrator = "MIGRATOR")]
+    async fn test_ensure_image(pool: Pool) {
+        let db = Database::new(pool);
 
         let image = PixelHash::try_from("329435e5e66be809").unwrap();
 
         db.ensure_image(&image).await.unwrap();
         db.ensure_image(&image).await.unwrap();
-
-        drop_schema(db.pool, db.schema.as_deref()).await.unwrap();
     }
 
     /// Ensures that an image can have an associated source and that it can be correctly retrieved.
     ///
     /// This test confirms the functionality of associating a source string with an image and
     /// ensures that this data can be accurately retrieved afterwards.
-    #[tokio::test]
-    async fn test_ensure_source() {
-        let db = get_db().await;
-        db.migrate().await.unwrap();
+    #[sqlx::test(migrator = "MIGRATOR")]
+    async fn test_ensure_source(pool: Pool) {
+        let db = Database::new(pool);
 
         let image = PixelHash::try_from("329435e5e66be809").unwrap();
 
@@ -980,18 +915,15 @@ mod tests {
             Some("src".to_string()),
             db.get_source(&image).await.unwrap()
         );
-
-        drop_schema(db.pool, db.schema.as_deref()).await.unwrap();
     }
 
     /// Ensures that inserting the same metadata multiple times does not result in an error.
     ///
     /// This test validates both the success of metadata insertion and idempotency,
     /// confirming that `ensure_image_has_metadata` can be executed on existing metadata without errors.
-    #[tokio::test]
-    async fn test_ensure_metadata() {
-        let db = get_db().await;
-        db.migrate().await.unwrap();
+    #[sqlx::test(migrator = "MIGRATOR")]
+    async fn test_ensure_metadata(pool: Pool) {
+        let db = Database::new(pool);
 
         let image = PixelHash::try_from("329435e5e66be809").unwrap();
         let metadata = ImageMetadata {
@@ -1012,18 +944,15 @@ mod tests {
             .unwrap();
 
         assert_eq!(Some(metadata), db.get_metadata(&image).await.unwrap());
-
-        drop_schema(db.pool, db.schema.as_deref()).await.unwrap();
     }
 
     /// Ensures that metadata can be inserted and retrieved correctly without a `created_at` value.
     ///
     /// This test confirms that `ensure_image_has_metadata` correctly handles metadata entries
     /// that lack a `created_at` field.
-    #[tokio::test]
-    async fn test_ensure_metadata_without_created_at() {
-        let db = get_db().await;
-        db.migrate().await.unwrap();
+    #[sqlx::test(migrator = "MIGRATOR")]
+    async fn test_ensure_metadata_without_created_at(pool: Pool) {
+        let db = Database::new(pool);
 
         let image = PixelHash::try_from("329435e5e66be809").unwrap();
         let metadata = ImageMetadata {
@@ -1039,8 +968,6 @@ mod tests {
             .await
             .unwrap();
         assert!(db.get_metadata(&image).await.unwrap().is_some());
-
-        drop_schema(db.pool, db.schema.as_deref()).await.unwrap();
     }
 
     /// Performs a comprehensive test of image tag operations including:
@@ -1048,32 +975,25 @@ mod tests {
     /// - Preventing duplicate tags
     /// - Removing tags safely and idempotently
     /// - Verifying the final list of tags.
-    #[tokio::test]
-    async fn test_operate_image_tag() {
-        let db = get_db().await;
-        db.migrate().await.unwrap();
+    #[sqlx::test(migrator = "MIGRATOR")]
+    async fn test_operate_image_tag(pool: Pool) {
+        let db = Database::new(pool);
 
         let image = PixelHash::try_from("329435e5e66be809").unwrap();
 
-        // Add tags "cat" and "dog" (including duplicate insertions)
         assert!(db.ensure_image_has_tags(&image, &["cat"]).await.is_ok());
         assert!(db.ensure_image_has_tags(&image, &["cat"]).await.is_ok());
         assert!(db.ensure_image_has_tags(&image, &["dog"]).await.is_ok());
 
-        // Confirm both tags are present
         assert_eq!(
             vec!["cat".to_string(), "dog".to_string()],
             db.get_tags(&image).await.unwrap()
         );
 
-        // Remove "dog" tag twice (should be safe and idempotent)
         db.ensure_tags_removed(&image, &["dog"]).await.unwrap();
         db.ensure_tags_removed(&image, &["dog"]).await.unwrap();
 
-        // Confirm only "cat" remains
         assert_eq!(vec!["cat".to_string()], db.get_tags(&image).await.unwrap());
-
-        drop_schema(db.pool, db.schema.as_deref()).await.unwrap();
     }
 
     /// Tests image querying based on tags, verifying that images are returned
@@ -1081,10 +1001,9 @@ mod tests {
     ///
     /// This ensures that the query results match the expected images for "cat",
     /// "dog", and "cat and dog" parameters.
-    #[tokio::test]
-    async fn test_query_image() {
-        let db = get_db().await;
-        db.migrate().await.unwrap();
+    #[sqlx::test(migrator = "MIGRATOR")]
+    async fn test_query_image(pool: Pool) {
+        let db = Database::new(pool);
 
         let image_cat = PixelHash::try_from("329435e5e66be809").unwrap();
         let image_dog = PixelHash::try_from("229435e5e66be809").unwrap();
@@ -1093,12 +1012,7 @@ mod tests {
         assert!(db.ensure_image_has_tags(&image_cat, &["cat"]).await.is_ok());
         assert!(db.ensure_image_has_tags(&image_dog, &["dog"]).await.is_ok());
         assert!(
-            db.ensure_image_has_tags(&image_cat_and_dog, &["cat"])
-                .await
-                .is_ok()
-        );
-        assert!(
-            db.ensure_image_has_tags(&image_cat_and_dog, &["dog"])
+            db.ensure_image_has_tags(&image_cat_and_dog, &["cat", "dog"])
                 .await
                 .is_ok()
         );
@@ -1115,13 +1029,11 @@ mod tests {
 
         let mut res = db.query_image(query_dog).await.unwrap();
         res.sort();
-        assert_eq!(vec![image_cat_and_dog.clone(), image_dog.clone(),], res);
+        assert_eq!(vec![image_cat_and_dog.clone(), image_dog.clone()], res);
 
         let mut res = db.query_image(query_cat_and_dog).await.unwrap();
         res.sort();
         assert_eq!(vec![image_cat_and_dog], res);
-
-        drop_schema(db.pool, db.schema.as_deref()).await.unwrap();
     }
 
     /// Tests the image counting functionality based on specific query criteria,
@@ -1129,10 +1041,10 @@ mod tests {
     ///
     /// This test confirms that the counted results match the expected count for
     /// images associated with "cat", "dog", and both "cat and dog" tags.
-    #[tokio::test]
-    async fn test_count_image() {
-        let db = get_db().await;
-        db.migrate().await.unwrap();
+
+    #[sqlx::test(migrator = "MIGRATOR")]
+    async fn test_count_image(pool: Pool) {
+        let db = Database::new(pool);
 
         let image_cat = PixelHash::try_from("329435e5e66be809").unwrap();
         let image_dog = PixelHash::try_from("229435e5e66be809").unwrap();
@@ -1155,14 +1067,11 @@ mod tests {
         assert_eq!(2, db.count_image(query_cat).await.unwrap());
         assert_eq!(2, db.count_image(query_dog).await.unwrap());
         assert_eq!(1, db.count_image(query_cat_and_dog).await.unwrap());
-
-        drop_schema(db.pool, db.schema.as_deref()).await.unwrap();
     }
 
-    #[tokio::test]
-    async fn test_count_image_by_tag() {
-        let db = get_db().await;
-        db.migrate().await.unwrap();
+    #[sqlx::test(migrator = "MIGRATOR")]
+    async fn test_count_image_by_tag(pool: Pool) {
+        let db = Database::new(pool);
 
         let image_cat = PixelHash::try_from("329435e5e66be809").unwrap();
         let image_dog = PixelHash::try_from("229435e5e66be809").unwrap();
@@ -1180,16 +1089,15 @@ mod tests {
 
         assert_eq!(2, db.count_image_by_tag("cat").await.unwrap());
         assert_eq!(2, db.count_image_by_tag("dog").await.unwrap());
-        drop_schema(db.pool, db.schema.as_deref()).await.unwrap();
     }
 
     /// Tests the querying of tags ensuring they can be accurately retrieved based on different query types.
     ///
     /// This confirms the correct behavior for exact match, containment, and retrieval of all tag entries.
-    #[tokio::test]
-    async fn test_query_tags() {
-        let db = get_db().await;
-        db.migrate().await.unwrap();
+
+    #[sqlx::test(migrator = "MIGRATOR")]
+    async fn test_query_tags(pool: Pool) {
+        let db = Database::new(pool);
 
         assert!(db.ensure_tags(&["cat"]).await.is_ok());
         assert!(db.ensure_tags(&["dog"]).await.is_ok());
@@ -1217,6 +1125,5 @@ mod tests {
             vec!["cat".to_string()],
             db.query_tags(query_contains_ca).await.unwrap()
         );
-        drop_schema(db.pool, db.schema.as_deref()).await.unwrap();
     }
 }
