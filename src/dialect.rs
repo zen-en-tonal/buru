@@ -232,6 +232,4 @@ pub trait Dialect {
             Self::placeholder(1)
         )
     }
-
-    async fn migration(pool: &sqlx::Pool<Db>, schema: Option<&str>) -> Result<(), sqlx::Error>;
 }

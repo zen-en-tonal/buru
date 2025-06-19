@@ -34,6 +34,14 @@ use sqlx::{Execute, FromRow, Row};
 use std::str::FromStr;
 use thiserror::Error;
 
+pub type Pool = sqlx::Pool<Db>;
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("migrations/sqlite");
+
+#[cfg(all(feature = "postgres", not(feature = "sqlite")))]
+pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("migrations/postgres");
+
 /// Run database migrations using the pool provided.
 ///
 /// # Arguments
@@ -44,8 +52,9 @@ use thiserror::Error;
 ///
 /// This function returns a `Result` indicating success or failure during
 /// the migration process.
-pub async fn run_migration(pool: &sqlx::Pool<Db>, schema: Option<&str>) -> Result<(), sqlx::Error> {
-    CurrentDialect::migration(pool, schema).await
+pub async fn run_migration(pool: &sqlx::Pool<Db>) -> Result<(), sqlx::Error> {
+    MIGRATOR.run(pool).await?;
+    Ok(())
 }
 
 impl FromRow<'_, CurrentRow> for ImageMetadata {
