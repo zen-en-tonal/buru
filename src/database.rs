@@ -647,7 +647,7 @@ impl Database {
                 let sql = query.sql();
 
                 query
-                    .fetch_optional(&self.pool)
+                    .fetch_one(&self.pool)
                     .await
                     .map_err(|e| DatabaseError::QueryFailed {
                         operation: DbOperation::QueryImages,
@@ -1124,6 +1124,24 @@ mod tests {
         assert_eq!(
             vec!["cat".to_string()],
             db.query_tags(query_contains_ca).await.unwrap()
+        );
+    }
+
+    #[sqlx::test(migrator = "MIGRATOR")]
+    async fn test_get_source(pool: Pool) {
+        let db = Database::new(pool);
+
+        let image_has_no_source = PixelHash::try_from("329435e5e66be809").unwrap();
+        db.ensure_image(&image_has_no_source).await.unwrap();
+        assert_eq!(None, db.get_source(&image_has_no_source).await.unwrap());
+
+        let image_has_source = PixelHash::try_from("329435e5e66be800").unwrap();
+        db.ensure_image_has_source(&image_has_source, "source")
+            .await
+            .unwrap();
+        assert_eq!(
+            Some("source".to_string()),
+            db.get_source(&image_has_source).await.unwrap()
         );
     }
 }
