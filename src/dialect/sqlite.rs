@@ -1,5 +1,4 @@
-use super::{Db, Dialect};
-use sqlx::Row;
+use super::Dialect;
 
 /// SQLite dialect implementation of the `Dialect` trait.
 pub struct SqliteDialect;
