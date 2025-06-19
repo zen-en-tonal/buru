@@ -121,8 +121,11 @@ impl ArchiveImageCommand {
         let hash = match storage.create_file(&self.bytes) {
             Ok(hash) => Ok(hash),
             Err(e) => match &e {
+                // allows creating the image if registration is incomplete.
                 StorageError::HashCollision { hash, .. } => {
                     if !db.image_exists(hash).await? {
+                        Ok(hash.clone())
+                    } else if db.get_metadata(hash).await?.is_none() {
                         Ok(hash.clone())
                     } else {
                         Err(e)
@@ -131,9 +134,10 @@ impl ArchiveImageCommand {
                 _ => Err(e),
             },
         }?;
-        let metadata = storage.get_metadata(&hash)?;
 
         let result = {
+            let metadata = storage.get_metadata(&hash)?;
+
             db.ensure_image(&hash).await?;
             db.ensure_image_has_metadata(&hash, &metadata).await?;
 
