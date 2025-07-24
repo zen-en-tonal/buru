@@ -40,6 +40,7 @@ use crate::{
     database::{Database, DatabaseError},
     query::{ImageQuery, TagQuery},
     storage::{ImageMetadata, MediaPath, PixelHash, Storage, StorageError},
+    utils,
 };
 use std::collections::{HashMap, HashSet};
 use tokio::task::JoinSet;
@@ -118,53 +119,55 @@ impl ArchiveImageCommand {
     ///
     /// Returns a `Result` containing the full `Image` model upon success or an `AppError` on failure.
     pub async fn execute(self, storage: &Storage, db: &Database) -> Result<Media, AppError> {
+        utils::retry(|| async {
+            let hash = self.ensure_image_in_storage(storage).await?;
+            let metadata = storage.get_metadata(&hash)?;
+            let media = self
+                .ensure_image_in_db(storage, db, &hash, metadata)
+                .await?;
+
+            Ok(media)
+        })
+        .await
+    }
+
+    async fn ensure_image_in_db(
+        &self,
+        storage: &Storage,
+        db: &Database,
+        hash: &PixelHash,
+        metadata: ImageMetadata,
+    ) -> Result<Media, AppError> {
+        db.ensure_image(hash).await?;
+        db.ensure_image_has_metadata(hash, &metadata).await?;
+
+        if !self.tags.is_empty() {
+            attach_tags(
+                db,
+                storage,
+                hash,
+                &self.tags.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
+            )
+            .await?;
+        }
+
+        if let Some(src) = &self.source {
+            attach_source(db, storage, hash, &src).await?;
+        }
+
+        find_image_by_hash(db, storage, hash).await
+    }
+
+    async fn ensure_image_in_storage(&self, storage: &Storage) -> Result<PixelHash, AppError> {
         let hash = match storage.create_file(&self.bytes) {
             Ok(hash) => Ok(hash),
             Err(e) => match &e {
                 // allows creating the image if registration is incomplete.
-                StorageError::HashCollision { hash, .. } => {
-                    if !db.image_exists(hash).await? {
-                        Ok(hash.clone())
-                    } else if db.get_metadata(hash).await?.is_none() {
-                        Ok(hash.clone())
-                    } else {
-                        Err(e)
-                    }
-                }
+                StorageError::HashCollision { hash, .. } => Ok(hash.clone()),
                 _ => Err(e),
             },
         }?;
-
-        let result = {
-            let metadata = storage.get_metadata(&hash)?;
-
-            db.ensure_image(&hash).await?;
-            db.ensure_image_has_metadata(&hash, &metadata).await?;
-
-            if !self.tags.is_empty() {
-                attach_tags(
-                    db,
-                    storage,
-                    &hash,
-                    &self.tags.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
-                )
-                .await?;
-            }
-
-            if let Some(src) = self.source {
-                attach_source(db, storage, &hash, &src).await?;
-            }
-
-            find_image_by_hash(db, storage, &hash).await
-        };
-
-        match result {
-            Ok(ok) => Ok(ok),
-            Err(e) => {
-                remove_image(storage, db, hash).await?;
-                Err(e)
-            }
-        }
+        Ok(hash)
     }
 }
 
