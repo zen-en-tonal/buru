@@ -123,6 +123,13 @@ impl Storage {
             }
         }
 
+        // Verify that the file was saved correctly by checking if metadata can be retrieved.
+        // If the file cannot be read, delete it and return an error.
+        if self.get_metadata(&pixel_hash).is_err() {
+            self.ensure_deleted(&pixel_hash).ok();
+            return Err(StorageError::UnsupportedFile { kind: None });
+        }
+
         Ok(pixel_hash)
     }
 
