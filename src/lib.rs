@@ -46,6 +46,7 @@ mod dialect;
 pub mod parser;
 pub mod query;
 pub mod storage;
+mod utils;
 
 pub mod prelude {
     use crate::{app, database, query, storage};

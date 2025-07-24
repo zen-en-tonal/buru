@@ -27,6 +27,7 @@ use crate::{
     dialect::{CurrentDialect, CurrentRow, Db, Dialect},
     query::{ImageQuery, TagQuery},
     storage::{ImageMetadata, PixelHash},
+    utils,
 };
 use chrono::{DateTime, Utc};
 use sqlx::{Execute, FromRow, Row};
@@ -98,28 +99,6 @@ impl Database {
         run_migration(&self.pool).await
     }
 
-    async fn retry<F, Fut, T>(&self, mut op: F) -> Result<T, DatabaseError>
-    where
-        F: FnMut() -> Fut,
-        Fut: std::future::Future<Output = Result<T, DatabaseError>>,
-    {
-        let max_retries = 3;
-        for attempt in 0..max_retries {
-            let result = op().await;
-            match result {
-                Ok(v) => return Ok(v),
-                Err(ref e) if e.is_retryable() && attempt + 1 < max_retries => {
-                    // backoff: simple fixed delay or exponential if needed
-                    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-                    continue;
-                }
-                Err(e) => return Err(e),
-            }
-        }
-
-        unreachable!("Retry loop should return before exceeding max_retries")
-    }
-
     /// Determines if an image exists in the database by its pixel hash.
     ///
     /// This method checks the existence of an image in the `images` table using the provided pixel hash.
@@ -138,20 +117,19 @@ impl Database {
     pub async fn image_exists(&self, hash: &PixelHash) -> Result<bool, DatabaseError> {
         let stmt = CurrentDialect::exists_image();
 
-        let res = self
-            .retry(|| async {
-                let query = sqlx::query_scalar(&stmt).bind(hash.clone().to_string());
-                let sql = query.sql();
-                query
-                    .fetch_one(&self.pool)
-                    .await
-                    .map_err(|e| DatabaseError::QueryFailed {
-                        operation: DbOperation::QueryImages,
-                        sql: sql.to_string(),
-                        source: e,
-                    })
-            })
-            .await?;
+        let res = utils::retry(|| async {
+            let query = sqlx::query_scalar(&stmt).bind(hash.clone().to_string());
+            let sql = query.sql();
+            query
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| DatabaseError::QueryFailed {
+                    operation: DbOperation::QueryImages,
+                    sql: sql.to_string(),
+                    source: e,
+                })
+        })
+        .await?;
 
         Ok(res)
     }
@@ -174,7 +152,7 @@ impl Database {
 
         let stmt = CurrentDialect::ensure_image_statement();
 
-        self.retry(|| async {
+        utils::retry(|| async {
             let query = sqlx::query(&stmt).bind(hash.clone().to_string());
             let sql = query.sql();
             query
@@ -210,7 +188,7 @@ impl Database {
 
         let stmt = CurrentDialect::ensure_metadata_statement();
 
-        self.retry(|| async {
+        utils::retry(|| async {
             let query = sqlx::query(&stmt)
                 .bind(hash.clone().to_string())
                 .bind(metadata.width as i64)
@@ -249,7 +227,7 @@ impl Database {
     pub async fn ensure_tags(&self, tags: &[&str]) -> Result<(), DatabaseError> {
         let stmt = CurrentDialect::ensure_tag_statement();
 
-        self.retry(|| async {
+        utils::retry(|| async {
             let mut tx = self
                 .pool
                 .begin()
@@ -299,7 +277,7 @@ impl Database {
 
         let stmt = CurrentDialect::ensure_image_tag_statement();
 
-        self.retry(|| async {
+        utils::retry(|| async {
             let mut tx = self
                 .pool
                 .begin()
@@ -350,7 +328,7 @@ impl Database {
 
         let stmt = CurrentDialect::update_source_statement();
 
-        self.retry(|| async {
+        utils::retry(|| async {
             let query = sqlx::query(&stmt)
                 .bind(source)
                 .bind(hash.clone().to_string());
@@ -386,26 +364,25 @@ impl Database {
         let (sql, params) = query.to_sql();
         let stmt = CurrentDialect::query_image_statement(sql);
 
-        let hashes = self
-            .retry(|| async {
-                let mut q = sqlx::query_scalar::<_, String>(&stmt);
+        let hashes = utils::retry(|| async {
+            let mut q = sqlx::query_scalar::<_, String>(&stmt);
 
-                for param in &params {
-                    q = q.bind(param);
-                }
+            for param in &params {
+                q = q.bind(param);
+            }
 
-                q.fetch_all(&self.pool)
-                    .await
-                    .map_err(|e| DatabaseError::QueryFailed {
-                        operation: DbOperation::QueryImages,
-                        sql: stmt.to_string(),
-                        source: e,
-                    })
-            })
-            .await?
-            .into_iter()
-            .filter_map(|s| PixelHash::try_from(s).ok())
-            .collect();
+            q.fetch_all(&self.pool)
+                .await
+                .map_err(|e| DatabaseError::QueryFailed {
+                    operation: DbOperation::QueryImages,
+                    sql: stmt.to_string(),
+                    source: e,
+                })
+        })
+        .await?
+        .into_iter()
+        .filter_map(|s| PixelHash::try_from(s).ok())
+        .collect();
 
         Ok(hashes)
     }
@@ -423,27 +400,26 @@ impl Database {
         let (sql, params) = query.to_sql();
         let stmt = CurrentDialect::count_image_statement(sql);
 
-        let count = self
-            .retry(|| async {
-                let mut q = sqlx::query_scalar(&stmt);
+        let count = utils::retry(|| async {
+            let mut q = sqlx::query_scalar(&stmt);
 
-                for param in &params {
-                    q = q.bind(param);
-                }
+            for param in &params {
+                q = q.bind(param);
+            }
 
-                // cast into signed because some DBs do not support unsigned types.
-                let count: i64 =
-                    q.fetch_one(&self.pool)
-                        .await
-                        .map_err(|e| DatabaseError::QueryFailed {
-                            operation: DbOperation::QueryImages,
-                            sql: stmt.to_string(),
-                            source: e,
-                        })?;
+            // cast into signed because some DBs do not support unsigned types.
+            let count: i64 =
+                q.fetch_one(&self.pool)
+                    .await
+                    .map_err(|e| DatabaseError::QueryFailed {
+                        operation: DbOperation::QueryImages,
+                        sql: stmt.to_string(),
+                        source: e,
+                    })?;
 
-                Ok(count as u64)
-            })
-            .await?;
+            Ok(count as u64)
+        })
+        .await?;
 
         Ok(count)
     }
@@ -467,23 +443,22 @@ impl Database {
     pub async fn count_image_by_tag(&self, tag: &str) -> Result<u64, DatabaseError> {
         let stmt = CurrentDialect::count_image_by_tag_statement();
 
-        let count = self
-            .retry(|| async {
-                let q = sqlx::query_scalar(&stmt).bind(tag);
+        let count = utils::retry(|| async {
+            let q = sqlx::query_scalar(&stmt).bind(tag);
 
-                let count: i64 = q
-                    .fetch_optional(&self.pool)
-                    .await
-                    .map(|r| r.unwrap_or_default())
-                    .map_err(|e| DatabaseError::QueryFailed {
-                        operation: DbOperation::QueryImages,
-                        sql: stmt.to_string(),
-                        source: e,
-                    })?;
+            let count: i64 = q
+                .fetch_optional(&self.pool)
+                .await
+                .map(|r| r.unwrap_or_default())
+                .map_err(|e| DatabaseError::QueryFailed {
+                    operation: DbOperation::QueryImages,
+                    sql: stmt.to_string(),
+                    source: e,
+                })?;
 
-                Ok(count as u64)
-            })
-            .await?;
+            Ok(count as u64)
+        })
+        .await?;
 
         Ok(count)
     }
@@ -502,7 +477,7 @@ impl Database {
     /// On success, it returns `Ok(())`. On failure, it returns a `DatabaseError` with context
     /// about the failed operation.
     pub async fn refresh_image_count(&self) -> Result<(), DatabaseError> {
-        self.retry(|| async {
+        utils::retry(|| async {
             let mut tx = self
                 .pool
                 .begin()
@@ -543,25 +518,24 @@ impl Database {
         let (sql, params) = query.to_sql();
         let stmt = CurrentDialect::query_tag_statement(sql);
 
-        let hashes = self
-            .retry(|| async {
-                let mut q = sqlx::query_scalar::<_, String>(&stmt);
+        let hashes = utils::retry(|| async {
+            let mut q = sqlx::query_scalar::<_, String>(&stmt);
 
-                for param in &params {
-                    q = q.bind(param);
-                }
+            for param in &params {
+                q = q.bind(param);
+            }
 
-                q.fetch_all(&self.pool)
-                    .await
-                    .map_err(|e| DatabaseError::QueryFailed {
-                        operation: DbOperation::QueryTags,
-                        sql: stmt.to_string(),
-                        source: e,
-                    })
-            })
-            .await?
-            .into_iter()
-            .collect();
+            q.fetch_all(&self.pool)
+                .await
+                .map_err(|e| DatabaseError::QueryFailed {
+                    operation: DbOperation::QueryTags,
+                    sql: stmt.to_string(),
+                    source: e,
+                })
+        })
+        .await?
+        .into_iter()
+        .collect();
 
         Ok(hashes)
     }
@@ -578,19 +552,18 @@ impl Database {
     pub async fn get_tags(&self, hash: &PixelHash) -> Result<Vec<String>, DatabaseError> {
         let stmt = CurrentDialect::query_tags_by_image_statement();
 
-        let rows = self
-            .retry(|| async {
-                sqlx::query_scalar(&stmt)
-                    .bind(hash.clone().to_string())
-                    .fetch_all(&self.pool)
-                    .await
-                    .map_err(|e| DatabaseError::QueryFailed {
-                        operation: DbOperation::QueryImages,
-                        sql: stmt.to_string(),
-                        source: e,
-                    })
-            })
-            .await?;
+        let rows = utils::retry(|| async {
+            sqlx::query_scalar(&stmt)
+                .bind(hash.clone().to_string())
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| DatabaseError::QueryFailed {
+                    operation: DbOperation::QueryImages,
+                    sql: stmt.to_string(),
+                    source: e,
+                })
+        })
+        .await?;
 
         Ok(rows)
     }
@@ -611,19 +584,18 @@ impl Database {
     ) -> Result<Option<ImageMetadata>, DatabaseError> {
         let stmt = CurrentDialect::query_metadata_statement();
 
-        let metadata: Option<ImageMetadata> = self
-            .retry(|| async {
-                sqlx::query_as(&stmt)
-                    .bind(hash.clone().to_string())
-                    .fetch_optional(&self.pool)
-                    .await
-                    .map_err(|e| DatabaseError::QueryFailed {
-                        operation: DbOperation::QueryImages,
-                        sql: stmt.to_string(),
-                        source: e,
-                    })
-            })
-            .await?;
+        let metadata: Option<ImageMetadata> = utils::retry(|| async {
+            sqlx::query_as(&stmt)
+                .bind(hash.clone().to_string())
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| DatabaseError::QueryFailed {
+                    operation: DbOperation::QueryImages,
+                    sql: stmt.to_string(),
+                    source: e,
+                })
+        })
+        .await?;
 
         Ok(metadata)
     }
@@ -641,21 +613,20 @@ impl Database {
     pub async fn get_source(&self, hash: &PixelHash) -> Result<Option<String>, DatabaseError> {
         let stmt = CurrentDialect::query_source_statement();
 
-        let soruce: Option<String> = self
-            .retry(|| async {
-                let query = sqlx::query_scalar(&stmt).bind(hash.clone().to_string());
-                let sql = query.sql();
+        let soruce: Option<String> = utils::retry(|| async {
+            let query = sqlx::query_scalar(&stmt).bind(hash.clone().to_string());
+            let sql = query.sql();
 
-                query
-                    .fetch_one(&self.pool)
-                    .await
-                    .map_err(|e| DatabaseError::QueryFailed {
-                        operation: DbOperation::QueryImages,
-                        sql: sql.to_string(),
-                        source: e,
-                    })
-            })
-            .await?;
+            query
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| DatabaseError::QueryFailed {
+                    operation: DbOperation::QueryImages,
+                    sql: sql.to_string(),
+                    source: e,
+                })
+        })
+        .await?;
 
         Ok(soruce)
     }
@@ -677,7 +648,7 @@ impl Database {
     ) -> Result<(), DatabaseError> {
         let stmt = CurrentDialect::delete_image_tag_statement();
 
-        self.retry(|| async {
+        utils::retry(|| async {
             let mut tx = self
                 .pool
                 .begin()
@@ -728,7 +699,7 @@ impl Database {
         let stmt_tags = CurrentDialect::delete_tags_by_image_statement();
         let stmt_image = CurrentDialect::delete_image_statement();
 
-        self.retry(|| async {
+        utils::retry(|| async {
             let mut tx = self
                 .pool
                 .begin()
@@ -854,25 +825,6 @@ pub enum DbOperation {
     },
     /// Operation for querying tags from the `tags` table.
     QueryTags,
-}
-
-impl DatabaseError {
-    fn is_retryable(&self) -> bool {
-        let is_retryable_kind = |e: &sqlx::Error| {
-            matches!(e, sqlx::Error::Io(_))
-                || matches!(e, sqlx::Error::Protocol(_))
-                || matches!(e, sqlx::Error::PoolTimedOut)
-        };
-
-        match self {
-            DatabaseError::QueryFailed {
-                sql: _,
-                source,
-                operation: _,
-            } => is_retryable_kind(source),
-            DatabaseError::TransactionFailed { source } => is_retryable_kind(source),
-        }
-    }
 }
 
 #[cfg(test)]
