@@ -15,7 +15,7 @@ exclude = [".github/", "Dockerfile", "docker-compose.yml"]
 
 [dependencies]
 chrono = "0.4.41"
-glob = "0.3.2"
+glob = "0.3.3"
 image = "0.25.6"
 infer = "0.19.0"
 sqlx = { version = "0.8", features = [ "runtime-tokio" ] }
