@@ -333,7 +333,7 @@ pub async fn query_image(
             Ok(Ok((hash, image))) => {
                 map.insert(hash, image);
             }
-            Ok(Err(e)) => return Err(e),
+            Ok(Err(_)) => continue,
             Err(join_err) => panic!("task panicked in image retrieval: {join_err}"),
         }
     }
