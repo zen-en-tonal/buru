@@ -23,11 +23,11 @@ FROM debian:stable-slim
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y \
-    libavcodec59 \
-    libavformat59 \
-    libavutil57 \
-    libavfilter8 \
-    libavdevice59 \
+    libavcodec61 \
+    libavformat61 \
+    libavutil59 \
+    libavfilter10 \
+    libavdevice61 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/target/release/web /app/web
