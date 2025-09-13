@@ -114,12 +114,10 @@ impl Storage {
                 let video_filepath = dir_path.join(video_filename);
                 fs::write(video_filepath, raw)?;
             }
-            Media::Image { content, kind } => {
+            Media::Image { kind, raw, .. } => {
                 let filename = self.derive_filename(&pixel_hash, kind.extension());
                 let filepath = dir_path.join(filename);
-                let format = ImageFormat::from_extension(kind.extension())
-                    .ok_or(StorageError::UnsupportedFile { kind: Some(kind) })?;
-                content.save_with_format(filepath, format)?;
+                fs::write(filepath, raw)?;
             }
         }
 
@@ -489,6 +487,7 @@ enum Media {
     Image {
         content: DynamicImage,
         kind: infer::Type,
+        raw: Vec<u8>,
     },
 }
 
@@ -502,6 +501,7 @@ impl Media {
                     .with_guessed_format()?
                     .decode()?,
                 kind,
+                raw: bytes.to_vec(),
             },
             infer::MatcherType::Video => Media::Video {
                 raw: bytes.to_vec(),
