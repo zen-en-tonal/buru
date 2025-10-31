@@ -42,7 +42,10 @@ use crate::{
     storage::{ImageMetadata, MediaPath, PixelHash, Storage, StorageError},
     utils,
 };
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+};
 use tokio::task::JoinSet;
 
 /// Represents a command for archiving an image into the system.
@@ -322,18 +325,26 @@ pub async fn query_image(
         let db = db.clone();
         let storage = storage.clone();
         set.spawn(async move {
-            let image = find_image_by_hash(&db, &storage, &hash).await?;
-            Ok::<(PixelHash, Media), AppError>((hash, image))
+            let image = find_image_by_hash(&db, &storage, &hash)
+                .await
+                .unwrap_or(Media {
+                    path: MediaPath::Image(PathBuf::from("unknown.png")),
+                    hash: hash.clone(),
+                    metadata: ImageMetadata::default(),
+                    tags: vec![],
+                    source: None,
+                });
+
+            (hash, image)
         });
     }
 
     let mut map = HashMap::new();
     while let Some(result) = set.join_next().await {
         match result {
-            Ok(Ok((hash, image))) => {
+            Ok((hash, image)) => {
                 map.insert(hash, image);
             }
-            Ok(Err(_)) => continue,
             Err(join_err) => panic!("task panicked in image retrieval: {join_err}"),
         }
     }
@@ -442,11 +453,13 @@ pub enum AppError {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use crate::{
         app::{ArchiveImageCommand, attach_tags, find_image_by_hash, query_image, remove_image},
         database::{Database, MIGRATOR, Pool},
         query::{ImageQuery, ImageQueryExpr, ImageQueryKind},
-        storage::Storage,
+        storage::{MediaPath, Storage},
     };
     use tempfile::TempDir;
 
@@ -516,6 +529,75 @@ mod tests {
                 .await
                 .unwrap()
                 .tags
+        );
+    }
+
+    #[sqlx::test(migrator = "MIGRATOR")]
+    async fn test_find_image_by_hash(pool: Pool) {
+        let db = Database::new(pool);
+        let storage = get_storage();
+        let file_bytes = include_bytes!("../testdata/44a5b6f94f4f6445.png");
+
+        let image = ArchiveImageCommand::new(file_bytes)
+            .with_tags(["cat".to_string()])
+            .with_source("https://example.com")
+            .execute(&storage, &db)
+            .await
+            .unwrap();
+
+        let found = find_image_by_hash(&db, &storage, &image.hash)
+            .await
+            .unwrap();
+
+        assert_eq!(image, found);
+    }
+
+    #[sqlx::test(migrator = "MIGRATOR")]
+    async fn test_query_image(pool: Pool) {
+        let db = Database::new(pool);
+        let storage = get_storage();
+        let file_bytes = include_bytes!("../testdata/44a5b6f94f4f6445.png");
+
+        let image = ArchiveImageCommand::new(file_bytes)
+            .with_tags(["cat".to_string()])
+            .with_source("https://example.com")
+            .execute(&storage, &db)
+            .await
+            .unwrap();
+
+        let query = ImageQuery::new(ImageQueryKind::Where(ImageQueryExpr::tag("cat")));
+
+        let images = query_image(&db, &storage, query).await.unwrap();
+
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0], image);
+    }
+
+    #[sqlx::test(migrator = "MIGRATOR")]
+    async fn test_query_iamge_but_missing_image_in_storage(pool: Pool) {
+        let db = Database::new(pool);
+        let storage = get_storage();
+        let file_bytes = include_bytes!("../testdata/44a5b6f94f4f6445.png");
+
+        let image = ArchiveImageCommand::new(file_bytes)
+            .with_tags(["cat".to_string()])
+            .with_source("https://example.com")
+            .execute(&storage, &db)
+            .await
+            .unwrap();
+
+        // simulate missing image in storage
+        storage.ensure_deleted(&image.hash).unwrap();
+
+        let query = ImageQuery::new(ImageQueryKind::Where(ImageQueryExpr::tag("cat")));
+
+        let images = query_image(&db, &storage, query).await.unwrap();
+
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].hash, image.hash);
+        assert_eq!(
+            images[0].path,
+            MediaPath::Image(PathBuf::from("unknown.png"))
         );
     }
 }
